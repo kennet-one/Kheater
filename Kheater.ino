@@ -80,12 +80,12 @@ void setup() {
   Serial.begin(115200);
 
   pinMode(13, OUTPUT); //реле кулера
-  pinMode(12, OUTPUT); //реле обороту корпуса
+  pinMode(26, OUTPUT); //реле обороту корпуса
   pinMode(14, OUTPUT); //реле H
   pinMode(27, OUTPUT); //реле L
 
   digitalWrite(27, HIGH);
-  digitalWrite(12, HIGH);
+  digitalWrite(26, LOW);
   digitalWrite(14, HIGH);
 
   mesh.init( MESH_PREFIX, MESH_PASSWORD, &userScheduler, MESH_PORT );
