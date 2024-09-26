@@ -11,6 +11,9 @@
 Scheduler userScheduler; 
 painlessMesh  mesh;
 
+unsigned long he4t = 0;
+bool he4timer = false;
+
 enum HEAT {
   HE0,
   HE1,
@@ -45,6 +48,15 @@ void heatcore () {
   }
 }
 
+void safetimer () {
+  if (he4timer) {
+    if (millis() - he4t >= 30000) { // 30 секунд
+      heat = HE4;
+      he4timer = false; 
+    }
+  }
+}
+
 void receivedCallback( uint32_t from, String &msg ) {
 
   String str1 = msg.c_str();
@@ -71,7 +83,9 @@ void receivedCallback( uint32_t from, String &msg ) {
   }
 
   if (str1.equals(str6)) { // виключано
-    heat = HE4;
+    heat = HE0;
+    he4t = millis();
+    he4timer = true;
   }
 }
 
@@ -95,6 +109,7 @@ void setup() {
 
 void loop() {
 
+  safetimer ();
   heatcore ();
 
   mesh.update();
