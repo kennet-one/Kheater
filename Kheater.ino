@@ -55,11 +55,14 @@ void heatcore () {
 
 void loop55timer () {
   if (he55f) {
-    if ((millis() - he55 >= 1800000) && (he55timer)) { // 30 минут
-      heat = HE1;
-    }
-    if ((millis() - he55 >= 1800000) && (!he55timer)) { // 30 минут
-      heat = HE0;
+    if (millis() - he55 >= 1800000) { // 30 хвилин
+      if (he55timer) {
+        heat = HE1;
+      } else {
+        heat = HE0;
+      }
+      he55timer = !he55timer; 
+      he55 = millis(); 
     }
   }
 }
