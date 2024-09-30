@@ -1,5 +1,5 @@
 //************************************************************
-// nodeId = 
+// nodeId = 1812998333
 //
 //************************************************************
 #include "painlessMesh.h"
@@ -17,6 +17,8 @@ bool he4timer = false;
 unsigned long he55 = 1800000;
 bool he55timer = true;
 bool he55f = false;
+
+bool rotatos = LOW;
 
 enum HEAT {
   HE0,
@@ -46,9 +48,10 @@ void heatcore () {
       
       break;
     case HE4:
-      digitalWrite(13, LOW);
+      digitalWrite(13, LOW); // викл кулер
       digitalWrite(27, HIGH); //викл реле L
       he55f = false;
+      digitalWrite(26, LOW); // викл оборотне реле
       break;
   }
 }
@@ -76,6 +79,11 @@ void safetimer () {
   }
 }
 
+void rotaation () {
+  rotatos = !rotatos;
+  digitalWrite(26, rotatos);
+}
+
 void receivedCallback( uint32_t from, String &msg ) {
 
   String str1 = msg.c_str();
@@ -85,6 +93,7 @@ void receivedCallback( uint32_t from, String &msg ) {
   String str5 = "he3";
   String str6 = "he4";
   String str7 = "he55";
+  String str8 = "hero";
 
   if (str1.equals(str2)) { // просто кулер
     heat = HE0;
@@ -110,6 +119,10 @@ void receivedCallback( uint32_t from, String &msg ) {
 
   if (str1.equals(str7)) { // 50/50 таймер
     he55f = !he55f;
+  }
+
+    if (str1.equals(str8)) { // просто кулер
+    rotaation ();
   }
 }
 
