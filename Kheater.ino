@@ -50,7 +50,11 @@ void heatcore () {
     case HE4:
       digitalWrite(13, LOW); // викл кулер
       digitalWrite(27, HIGH); //викл реле L
-      he55f = false;
+      if (he55 > 1800000) {
+        he55f = false;
+        he55 = 1800000;
+      }
+      
       digitalWrite(26, LOW); // викл оборотне реле
       break;
   }
