@@ -2,6 +2,14 @@
 // nodeId = 1812998333
 //
 //************************************************************
+// нада ше добавити
+//
+// фітбек на змінення окремих опцій
+// фітбек на всьо разом
+// зовнішній контроль температури
+// внутрішній контроль температури
+// дисплей
+// фізичні кнопки не сенсорні, нахуй сенсорні кнопки
 #include "painlessMesh.h"
 
 #define   MESH_PREFIX     "kennet"
@@ -50,7 +58,7 @@ void heatcore () {
     case HE4:
       digitalWrite(13, LOW); // викл кулер
       digitalWrite(27, HIGH); //викл реле L
-      if (he55 > 1800000) {
+      if (he55 > 1800000) {     // тут є баг з виключаного стану нормально включаеця но тільки один раз
         he55f = false;
         he55 = 1800000;
       }
@@ -86,6 +94,7 @@ void safetimer () {
 void rotaation () {
   rotatos = !rotatos;
   digitalWrite(26, rotatos);
+  mesh.sendSingle(624409705, "09" + (rotatos ? String("1") : String("0")));
 }
 
 void receivedCallback( uint32_t from, String &msg ) {
