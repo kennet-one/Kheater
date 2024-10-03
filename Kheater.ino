@@ -68,8 +68,29 @@ void heatcore () {
   }
 }
 
+void heatfeedback () {
+  switch (heat) {
+    case HE0:
+      mesh.sendSingle(624409705,"250");
+      break;
+    case HE1:
+      mesh.sendSingle(624409705,"251");
+      break;
+    case HE2:
+      mesh.sendSingle(624409705,"252");
+      break;
+    case HE3:
+      mesh.sendSingle(624409705,"253");
+      break;
+    case HE4:
+      mesh.sendSingle(624409705,"254");
+      break;
+  }
+}
+
 void loop55timer () {
   if (he55f) {
+    mesh.sendSingle(624409705,"255");
     if (millis() - he55 >= 1800000) { // 30 хвилин
       if (he55timer) {
         heat = HE1;
@@ -110,24 +131,29 @@ void receivedCallback( uint32_t from, String &msg ) {
 
   if (str1.equals(str2)) { // просто кулер
     heat = HE0;
+    heatfeedback();
   }
 
   if (str1.equals(str3)) { // кулер + нагрев L
     heat = HE1;
+    heatfeedback();
   }
   
   if (str1.equals(str4)) { // кулер + нагрев H
     heat = HE2;
+    heatfeedback();
   }
   
   if (str1.equals(str5)) { // кулер + нагрев L + H
     heat = HE3;
+    heatfeedback();
   }
 
   if (str1.equals(str6)) { // виключано
     heat = HE0;
     he4t = millis();
     he4timer = true;
+    heatfeedback();
   }
 
   if (str1.equals(str7)) { // 50/50 таймер
@@ -138,7 +164,6 @@ void receivedCallback( uint32_t from, String &msg ) {
     rotaation ();
   }
 }
-
 
 void setup() {
   Serial.begin(115200);
