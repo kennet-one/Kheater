@@ -22,10 +22,6 @@ painlessMesh  mesh;
 unsigned long he4t = 0;
 bool he4timer = false;
 
-unsigned long he55 = 1800000;
-bool he55timer = true;
-bool he55f = false;
-
 bool rotatos = LOW;
 
 enum HEAT {
@@ -58,10 +54,6 @@ void heatcore () {
     case HE4:
       digitalWrite(13, LOW); // викл кулер
       digitalWrite(27, HIGH); //викл реле L
-      if (he55 > 1800000) {     // тут є баг з виключаного стану нормально включаеця но тільки один раз
-        he55f = false;
-        he55 = 1800000;
-      }
       
       digitalWrite(26, LOW); // викл оборотне реле
       break;
@@ -88,21 +80,6 @@ void heatfeedback () {
   }
 }
 
-void loop55timer () {
-  if (he55f) {
-    mesh.sendSingle(624409705,"255");
-    if (millis() - he55 >= 1800000) { // 30 хвилин
-      if (he55timer) {
-        heat = HE1;
-      } else {
-        heat = HE0;
-      }
-      he55timer = !he55timer; 
-      he55 = millis(); 
-    }
-  }
-}
-
 void safetimer () {
   if (he4timer) {
     if (millis() - he4t >= 30000) { // 30 секунд
@@ -126,7 +103,7 @@ void receivedCallback( uint32_t from, String &msg ) {
   String str4 = "he2";
   String str5 = "he3";
   String str6 = "he4";
-  String str7 = "he55";
+  //String str7 = "he55";
   String str8 = "hero";
 
   if (str1.equals(str2)) { // просто кулер
@@ -156,9 +133,9 @@ void receivedCallback( uint32_t from, String &msg ) {
     heatfeedback();
   }
 
-  if (str1.equals(str7)) { // 50/50 таймер
-    he55f = !he55f;
-  }
+  // if (str1.equals(str7)) { // 50/50 таймер
+  //   he55f = !he55f;
+  // }
 
     if (str1.equals(str8)) { // просто кулер
     rotaation ();
@@ -186,8 +163,6 @@ void loop() {
 
   safetimer ();
   heatcore ();
-
-  loop55timer ();
 
   mesh.update();
 }
