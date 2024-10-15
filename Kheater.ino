@@ -96,51 +96,56 @@ void rotaation () {
 }
 
 void receivedCallback( uint32_t from, String &msg ) {
-
   String str1 = msg.c_str();
   String str2 = "he0";
   String str3 = "he1";
   String str4 = "he2";
   String str5 = "he3";
   String str6 = "he4";
-  //String str7 = "he55";
   String str8 = "hero";
 
   if (str1.equals(str2)) { // просто кулер
     heat = HE0;
     heatfeedback();
   }
-
-  if (str1.equals(str3)) { // кулер + нагрев L
+  else if (str1.equals(str3)) { // кулер + нагрів L
     heat = HE1;
     heatfeedback();
   }
-  
-  if (str1.equals(str4)) { // кулер + нагрев H
+  else if (str1.equals(str4)) { // кулер + нагрів H
     heat = HE2;
     heatfeedback();
   }
-  
-  if (str1.equals(str5)) { // кулер + нагрев L + H
+  else if (str1.equals(str5)) { // кулер + нагрів L + H
     heat = HE3;
     heatfeedback();
   }
-
-  if (str1.equals(str6)) { // виключано
+  else if (str1.equals(str6)) { // виключено
     heat = HE0;
     he4t = millis();
     he4timer = true;
     heatfeedback();
   }
+  else if (str1.equals(str8)) { // просто кулер
+    rotaation();
+  }
+  else if (str1.startsWith("05")) {
 
-  // if (str1.equals(str7)) { // 50/50 таймер
-  //   he55f = !he55f;
-  // }
+    String tempString = str1.substring(2); // Отримуємо підрядок після перших двох символів
+    float temperature = tempString.toFloat();
 
-    if (str1.equals(str8)) { // просто кулер
-    rotaation ();
+    if (tempString.length() > 0) {
+      //Serial.println(temperature);
+
+      if (temperature < 27.00) {
+        heat = HE1;; // меньше заданої температури
+      } else {
+        heat = HE0;; // більше
+      }
+    }
   }
 }
+
 
 void setup() {
   Serial.begin(115200);
