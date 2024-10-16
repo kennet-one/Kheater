@@ -24,6 +24,8 @@ bool he4timer = false;
 
 bool rotatos = LOW;
 
+float extemp = 27.10;
+
 enum HEAT {
   HE0,
   HE1,
@@ -137,11 +139,18 @@ void receivedCallback( uint32_t from, String &msg ) {
     if (tempString.length() > 0) {
       //Serial.println(temperature);
 
-      if (temperature < 27.00) {
+      if (temperature < extemp) {
         heat = HE1;; // меньше заданої температури
       } else {
         heat = HE0;; // більше
       }
+    }
+  }
+  else if (str1.startsWith("W5")) {
+
+    String tempString = str1.substring(2); // Отримуємо підрядок після перших двох символів
+    if (tempString.length() > 0) {
+      extemp = tempString.toFloat();
     }
   }
 }
