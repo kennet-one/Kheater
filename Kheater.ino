@@ -150,7 +150,8 @@ void receivedCallback( uint32_t from, String &msg ) {
 
     String tempString = str1.substring(2); // Отримуємо підрядок після перших двох символів
     if (tempString.length() > 0) {
-      extemp = tempString.toFloat();
+      mesh.sendSingle(624409705, "R5" + tempString);
+      extemp = tempString.toFloat();    // устанавлюем підтримувану температуру
     }
   }
 }
