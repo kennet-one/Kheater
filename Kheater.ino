@@ -6,7 +6,6 @@
 //
 // фітбек на змінення окремих опцій
 // фітбек на всьо разом
-// зовнішній контроль температури
 // внутрішній контроль температури
 // дисплей
 // фізичні кнопки не сенсорні, нахуй сенсорні кнопки
@@ -25,6 +24,7 @@ bool he4timer = false;
 bool rotatos = LOW;
 
 float extemp = 27.10;
+bool extempflag = true;
 
 enum HEAT {
   HE0,
@@ -104,6 +104,7 @@ void receivedCallback( uint32_t from, String &msg ) {
   String str4 = "he2";
   String str5 = "he3";
   String str6 = "he4";
+  String str7 = "he5";
   String str8 = "hero";
 
   if (str1.equals(str2)) { // просто кулер
@@ -122,13 +123,18 @@ void receivedCallback( uint32_t from, String &msg ) {
     heat = HE3;
     heatfeedback();
   }
+  else if (str1.equals(str7)) { // вкл ауто мод
+    extempflag = true;
+    //heatfeedback();
+  }
   else if (str1.equals(str6)) { // виключено
     heat = HE0;
     he4t = millis();
     he4timer = true;
     heatfeedback();
+    extempflag = false;
   }
-  else if (str1.equals(str8)) { // просто кулер
+  else if (str1.equals(str8)) { // оборот корпуса
     rotaation();
   }
   else if (str1.startsWith("05")) {
@@ -139,7 +145,7 @@ void receivedCallback( uint32_t from, String &msg ) {
     if (tempString.length() > 0) {
       //Serial.println(temperature);
 
-      if (temperature < extemp) {
+      if ((temperature < extemp) && (extempflag)) {
         heat = HE1;; // меньше заданої температури
       } else {
         heat = HE0;; // більше
