@@ -3,7 +3,7 @@
 //
 //************************************************************
 // нада ше добавити
-//
+// нада шось придумати з флагом авто в ручному режимі управленія
 // фітбек на змінення окремих опцій
 // фітбек на всьо разом
 // внутрішній контроль температури
@@ -143,6 +143,7 @@ void receivedCallback( uint32_t from, String &msg ) {
     float temperature = tempString.toFloat();
 
     if (tempString.length() > 0) {
+      mesh.sendSingle(624409705, "A5");
       //Serial.println(temperature);
 
       if ((temperature < extemp) && (extempflag)) {
