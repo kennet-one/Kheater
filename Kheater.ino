@@ -4,7 +4,6 @@
 //************************************************************
 // нада ше добавити
 // нада шось придумати з флагом авто в ручному режимі управленія
-// фітбек на змінення окремих опцій
 // фітбек на всьо разом
 // внутрішній контроль температури
 // дисплей
@@ -82,7 +81,7 @@ void heatfeedback () {
   }
 }
 
-void safetimer () {
+void safetimer () { // цей таймер запускаєця коли нада охладити нагреватель перед виключенням
   if (he4timer) {
     if (millis() - he4t >= 30000) { // 30 секунд
       heat = HE4;
@@ -91,7 +90,7 @@ void safetimer () {
   }
 }
 
-void rotaation () {
+void rotaation () { // обороти корпуса
   rotatos = !rotatos;
   digitalWrite(26, rotatos);
   mesh.sendSingle(624409705, "09" + (rotatos ? String("1") : String("0")));
@@ -106,6 +105,7 @@ void receivedCallback( uint32_t from, String &msg ) {
   String str6 = "he4";
   String str7 = "he5";
   String str8 = "hero";
+  String str9 = "heho";
 
   if (str1.equals(str2)) { // просто кулер
     heat = HE0;
@@ -125,7 +125,6 @@ void receivedCallback( uint32_t from, String &msg ) {
   }
   else if (str1.equals(str7)) { // вкл ауто мод
     extempflag = true;
-    //heatfeedback();
   }
   else if (str1.equals(str6)) { // виключено
     heat = HE0;
@@ -137,14 +136,18 @@ void receivedCallback( uint32_t from, String &msg ) {
   else if (str1.equals(str8)) { // оборот корпуса
     rotaation();
   }
-  else if (str1.startsWith("05")) {
+  else if (str1.equals(str9)) { // eho
+    heatfeedback();
+    mesh.sendSingle(624409705, "09" + (rotatos ? String("1") : String("0")));
+    mesh.sendSingle(624409705, "R5" + String(extemp));
+  }
+  else if (str1.startsWith("05")) {  // AUTO мод
 
     String tempString = str1.substring(2); // Отримуємо підрядок після перших двох символів
     float temperature = tempString.toFloat();
 
     if (tempString.length() > 0) {
       mesh.sendSingle(624409705, "A5");
-      //Serial.println(temperature);
 
       if ((temperature < extemp) && (extempflag)) {
         heat = HE1;; // меньше заданої температури
@@ -153,11 +156,11 @@ void receivedCallback( uint32_t from, String &msg ) {
       }
     }
   }
-  else if (str1.startsWith("W5")) {
+  else if (str1.startsWith("W5")) { // тут устанавлюем яку температуру буде підтримувати AUTO мод
 
     String tempString = str1.substring(2); // Отримуємо підрядок після перших двох символів
     if (tempString.length() > 0) {
-      mesh.sendSingle(624409705, "R5" + tempString);
+      mesh.sendSingle(624409705, "R5" + tempString); // тут наверно нада поміняти на екстемп
       extemp = tempString.toFloat();    // устанавлюем підтримувану температуру
     }
   }
@@ -178,7 +181,6 @@ void setup() {
 
   mesh.init( MESH_PREFIX, MESH_PASSWORD, &userScheduler, MESH_PORT );
   mesh.onReceive(&receivedCallback);
-
 }
 
 void loop() {
