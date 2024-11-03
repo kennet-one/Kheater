@@ -5,18 +5,20 @@
 // нада ше добавити
 // нада шось придумати з флагом авто в ручному режимі управленія
 // внутрішній контроль температури
-// дисплей
 // фізичні кнопки не сенсорні, нахуй сенсорні кнопки
-#include "painlessMesh.h"
+// приклеїти екран на лока клей
+// розширений контроль температури : переключати реле залежно від різниці температури
+// відображення активного режиму
 
-#include <U8g2lib.h> 
-#include <Wire.h> 
+#include "painlessMesh.h" // фай фай меш
+#include <U8g2lib.h> // бібліотека дистплея
+#include <Wire.h>  // I2C 
 
-U8G2_SH1106_128X64_NONAME_F_HW_I2C u8g2(U8G2_R0, /* reset=*/ U8X8_PIN_NONE);
+U8G2_SH1106_128X64_NONAME_F_HW_I2C u8g2(U8G2_R0, /* reset=*/ U8X8_PIN_NONE); // який і як підключаний дисплей
 
 const uint16_t logo_widht PROGMEM = 64; // Размер в пикселях, а не в байтах
 const uint16_t logo_height PROGMEM = 64;
-const uint8_t logo[512] PROGMEM = {
+const uint8_t logo[512] PROGMEM = {           // лого при включенні
   0b00100101, 0b00100100, 0b10001010, 0b10000000, 0b00001110, 0b00001000, 0b00000000, 0b10100100,
   0b10010010, 0b01001001, 0b00100000, 0b00010000, 0b00011111, 0b01111100, 0b00100110, 0b00101010,
   0b01001001, 0b00100100, 0b00101001, 0b00000000, 0b00011111, 0b11101100, 0b00001000, 0b10010101,
@@ -83,30 +85,30 @@ const uint8_t logo[512] PROGMEM = {
   0b01010001, 0b00000111, 0b11111011, 0b01101101, 0b01101010, 0b10011010, 0b11001010, 0b10111110,
 };
 
-#define   MESH_PREFIX     "kennet"
-#define   MESH_PASSWORD   "kennet123"
-#define   MESH_PORT       5555
+#define   MESH_PREFIX     "kennet"        // параметри конфіга меш сеті
+#define   MESH_PASSWORD   "kennet123"     //
+#define   MESH_PORT       5555            //
 
 Scheduler userScheduler; 
 painlessMesh  mesh;
 
-unsigned long he4t = 0;
-bool he4timer = false;
+unsigned long he4t = 0;      // часті таймера для безпечного іимкнення
+bool he4timer = false;       //
 
-bool rotatos = LOW;
+bool rotatos = LOW;          // оборот корпуча по умолчанію виключаний
 
-float extemp = 27.10;
-bool extempflag = true;
+float extemp = 27.10;        // зовнішня не з внутрішньго датчика температура яку нада підтримувати
+bool extempflag = true;      // по умолчанію AUTO mod включано
 
-enum HEAT {
+enum HEAT {    // часть heatcore
   HE0,
   HE1,
   HE2,
   HE3,
   HE4
-} heat = HE4;
+} heat = HE4;     // по умолчанію виключанно НО AUTO mod має більший пріоритет
 
-void heatcore () {
+void heatcore () {     // главний робочий цикл обогревателя
   switch (heat) {
     case HE0:
       digitalWrite(13, HIGH);  // вкл кулер
@@ -134,7 +136,7 @@ void heatcore () {
   }
 }
 
-void heatfeedback () {
+void heatfeedback () {    // обратна связь главного цикла
   switch (heat) {
     case HE0:
       mesh.sendSingle(624409705,"250");
@@ -169,7 +171,7 @@ void rotaation () { // обороти корпуса
   mesh.sendSingle(624409705, "09" + (rotatos ? String("1") : String("0")));
 }
 
-void receivedCallback( uint32_t from, String &msg ) {
+void receivedCallback( uint32_t from, String &msg ) {          // прийомка MASH сеті
   String str1 = msg.c_str();
   String str2 = "he0";
   String str3 = "he1";
@@ -211,8 +213,8 @@ void receivedCallback( uint32_t from, String &msg ) {
   }
   else if (str1.equals(str9)) { // eho
     heatfeedback();
-    mesh.sendSingle(624409705, "09" + (rotatos ? String("1") : String("0")));
-    mesh.sendSingle(624409705, "R5" + String(extemp));
+    mesh.sendSingle(624409705, "09" + (rotatos ? String("1") : String("0")));     // обратна связь оборота корпуса
+    mesh.sendSingle(624409705, "R5" + String(extemp));                            // обратна связь усттановляної тесператури для підтримування
   }
   else if (str1.startsWith("05")) {  // AUTO мод
 
@@ -220,7 +222,7 @@ void receivedCallback( uint32_t from, String &msg ) {
     float temperature = tempString.toFloat();
 
     if (tempString.length() > 0) {
-      mesh.sendSingle(624409705, "A5");
+      mesh.sendSingle(624409705, "A5");      // обратна связь активації AUTO moda
 
       if ((temperature < extemp) && (extempflag)) {
         heat = HE1;; // меньше заданої температури
