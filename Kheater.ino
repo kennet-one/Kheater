@@ -12,7 +12,8 @@
 
 #include "painlessMesh.h" // фай фай меш
 #include <U8g2lib.h> // бібліотека дистплея
-#include <Wire.h>  // I2C 
+#include <Wire.h>  // I2C
+#include "mash_parameter.h"
 
 U8G2_SH1106_128X64_NONAME_F_HW_I2C u8g2(U8G2_R0, /* reset=*/ U8X8_PIN_NONE); // який і як підключаний дисплей
 
@@ -84,10 +85,6 @@ const uint8_t logo[512] PROGMEM = {           // лого при включен�
   0b01010100, 0b01000011, 0b11111110, 0b11111111, 0b01011011, 0b01110111, 0b00101010, 0b00111110,
   0b01010001, 0b00000111, 0b11111011, 0b01101101, 0b01101010, 0b10011010, 0b11001010, 0b10111110,
 };
-
-#define   MESH_PREFIX     "kennet"        // параметри конфіга меш сеті
-#define   MESH_PASSWORD   "kennet123"     //
-#define   MESH_PORT       5555            //
 
 Scheduler userScheduler; 
 painlessMesh  mesh;
