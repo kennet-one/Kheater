@@ -9,7 +9,6 @@
 // відображення активного режиму
 // при потері конекта з зовнішнім датчиком температури шоб переходив на встрояний
 // КНОПКА ВКЛ ВИКЛ
-// баг фікс обратної связі в режимі ауто
 // таймер последбнього ауто пакету шоб виключав нагрев
 
 #include "painlessMesh.h" // фай фай меш
@@ -110,21 +109,21 @@ enum HEAT {    // часть heatcore
 void heatcore () {     // главний робочий цикл обогревателя
   switch (heat) {
     case HE0:
-      digitalWrite(13, HIGH);  // вкл кулер
-
-      digitalWrite(27, HIGH);   //викл реле L
+      digitalWrite(13, HIGH);   // вкл кулер
+      digitalWrite(14, HIGH);   // викл реле H
+      digitalWrite(27, HIGH);   // викл реле L
       break;
 
     case HE1:
       digitalWrite(13, HIGH);  // вкл кулер
-      digitalWrite(27, LOW); // вкл реле L
-      digitalWrite(14, HIGH); //викл реле H
+      digitalWrite(27, LOW);   // вкл реле L
+      digitalWrite(14, HIGH);  // викл реле H
       break;
 
     case HE2:
       digitalWrite(13, HIGH);  // вкл кулер
-      digitalWrite(14, LOW); // вкл реле H
-      digitalWrite(27, HIGH); //викл реле L
+      digitalWrite(14, LOW);   // вкл реле H
+      digitalWrite(27, HIGH);  // викл реле L
       break;
     case HE3:
       
@@ -142,13 +141,25 @@ void heatcore () {     // главний робочий цикл обогрев�
 void heatfeedback () {    // обратна связь главного цикла
   switch (heat) {
     case HE0:
-      mesh.sendSingle(624409705,"250");
+      if (extempflag) {
+        mesh.sendSingle(624409705, "A5");
+      } else {
+        mesh.sendSingle(624409705,"250");
+      }
       break;
     case HE1:
-      mesh.sendSingle(624409705,"251");
+      if (extempflag) {
+        mesh.sendSingle(624409705, "A5");
+      } else {
+        mesh.sendSingle(624409705,"251");
+      }
       break;
     case HE2:
-      mesh.sendSingle(624409705,"252");
+      if (extempflag) {
+        mesh.sendSingle(624409705, "A5");
+      } else {
+        mesh.sendSingle(624409705,"252");
+      }
       break;
     case HE3:
       mesh.sendSingle(624409705,"253");
