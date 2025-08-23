@@ -142,30 +142,30 @@ void heatfeedback () {    // обратна связь главного цикл
   switch (heat) {
     case HE0:
       if (extempflag) {
-        mesh.sendSingle(624409705, "A5");
+        mesh.sendBroadcast("A5");
       } else {
-        mesh.sendSingle(624409705,"250");
+        mesh.sendBroadcast("250");
       }
       break;
     case HE1:
       if (extempflag) {
-        mesh.sendSingle(624409705, "A5");
+        mesh.sendBroadcast("A5");
       } else {
-        mesh.sendSingle(624409705,"251");
+        mesh.sendBroadcast("251");
       }
       break;
     case HE2:
       if (extempflag) {
-        mesh.sendSingle(624409705, "A5");
+        mesh.sendBroadcast("A5");
       } else {
-        mesh.sendSingle(624409705,"252");
+        mesh.sendBroadcast("252");
       }
       break;
     case HE3:
-      mesh.sendSingle(624409705,"253");
+        mesh.sendBroadcast("253");
       break;
     case HE4:
-      mesh.sendSingle(624409705,"254");
+        mesh.sendBroadcast("254");
       break;
   }
 }
@@ -182,7 +182,7 @@ void safetimer () { // цей таймер запускаєця коли над�
 void rotaation () { // обороти корпуса
   rotatos = !rotatos;
   digitalWrite(26, rotatos);
-  mesh.sendSingle(624409705, "09" + (rotatos ? String("1") : String("0")));
+  mesh.sendBroadcast("09" + (rotatos ? String("1") : String("0")));
 }
 
 void receivedCallback( uint32_t from, String &msg ) {          // прийомка MASH сеті
@@ -227,8 +227,8 @@ void receivedCallback( uint32_t from, String &msg ) {          // прийомк
   }
   else if (str1.equals(str9)) { // eho
     heatfeedback();
-    mesh.sendSingle(624409705, "09" + (rotatos ? String("1") : String("0")));     // обратна связь оборота корпуса
-    mesh.sendSingle(624409705, "R5" + String(extemp));                            // обратна связь усттановляної тесператури для підтримування
+    mesh.sendBroadcast("09" + (rotatos ? String("1") : String("0")));     // обратна связь оборота корпуса
+    mesh.sendBroadcast("R5" + String(extemp));                            // обратна связь усттановляної тесператури для підтримування
   }
   else if (str1.startsWith("05")) {  // AUTO мод
 
@@ -236,7 +236,7 @@ void receivedCallback( uint32_t from, String &msg ) {          // прийомк
     float temperature = tempString.toFloat();
 
     if (tempString.length() > 0) {
-      mesh.sendSingle(624409705, "A5");      // обратна связь активації AUTO moda
+      mesh.sendBroadcast("A5");      // обратна связь активації AUTO moda
 
       if (extempflag) {
         float diff = extemp - temperature;
@@ -257,7 +257,7 @@ void receivedCallback( uint32_t from, String &msg ) {          // прийомк
 
     String tempString = str1.substring(2); // Отримуємо підрядок після перших двох символів
     if (tempString.length() > 0) {
-      mesh.sendSingle(624409705, "R5" + tempString); // тут наверно нада поміняти на екстемп
+      mesh.sendBroadcast("R5" + tempString); // тут наверно нада поміняти на екстемп
       extemp = tempString.toFloat();    // устанавлюем підтримувану температуру
     }
   }
