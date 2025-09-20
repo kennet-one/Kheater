@@ -12,6 +12,7 @@
 // таймер последбнього ауто пакету шоб виключав нагрев
 
 #include "painlessMesh.h" // фай фай меш
+#include "CRCMASH.h"
 #include <U8g2lib.h> // бібліотека дистплея
 #include <Wire.h>  // I2C
 #include "mash_parameter.h"
@@ -87,9 +88,7 @@ const uint8_t logo[512] PROGMEM = {           // лого при включен�
   0b01010001, 0b00000111, 0b11111011, 0b01101101, 0b01101010, 0b10011010, 0b11001010, 0b10111110,
 };
 
-Scheduler userScheduler; 
-painlessMesh  mesh;
-
+Scheduler userScheduler;
 unsigned long he4t = 0;      // часті таймера для безпечного іимкнення
 bool he4timer = false;       //
 
@@ -142,30 +141,30 @@ void heatfeedback () {    // обратна связь главного цикл
   switch (heat) {
     case HE0:
       if (extempflag) {
-        mesh.sendBroadcast("A5");
+        sendB("A5");
       } else {
-        mesh.sendBroadcast("250");
+        sendB("250");
       }
       break;
     case HE1:
       if (extempflag) {
-        mesh.sendBroadcast("A5");
+        sendB("A5");
       } else {
-        mesh.sendBroadcast("251");
+        sendB("251");
       }
       break;
     case HE2:
       if (extempflag) {
-        mesh.sendBroadcast("A5");
+        sendB("A5");
       } else {
-        mesh.sendBroadcast("252");
+        sendB("252");
       }
       break;
     case HE3:
-        mesh.sendBroadcast("253");
+        sendB("253");
       break;
     case HE4:
-        mesh.sendBroadcast("254");
+        sendB("254");
       break;
   }
 }
@@ -182,11 +181,15 @@ void safetimer () { // цей таймер запускаєця коли над�
 void rotaation () { // обороти корпуса
   rotatos = !rotatos;
   digitalWrite(26, rotatos);
-  mesh.sendBroadcast("09" + (rotatos ? String("1") : String("0")));
+  sendB("09" + (rotatos ? String("1") : String("0")));
 }
 
-void receivedCallback( uint32_t from, String &msg ) {          // прийомка MASH сеті
-  String str1 = msg.c_str();
+
+
+// === Deferred handler: original callback body moved here (works on verified 'body') ===
+void handleBodyFrom(uint32_t from, const String& body){
+          // прийомка MASH сеті
+  String str1 = body;
   String str2 = "he0";
   String str3 = "he1";
   String str4 = "he2";
@@ -227,8 +230,8 @@ void receivedCallback( uint32_t from, String &msg ) {          // прийомк
   }
   else if (str1.equals(str9)) { // eho
     heatfeedback();
-    mesh.sendBroadcast("09" + (rotatos ? String("1") : String("0")));     // обратна связь оборота корпуса
-    mesh.sendBroadcast("R5" + String(extemp));                            // обратна связь усттановляної тесператури для підтримування
+    sendB("09" + (rotatos ? String("1") : String("0")));     // обратна связь оборота корпуса
+    sendB("R5" + String(extemp));                            // обратна связь усттановляної тесператури для підтримування
   }
   else if (str1.startsWith("05")) {  // AUTO мод
 
@@ -236,7 +239,7 @@ void receivedCallback( uint32_t from, String &msg ) {          // прийомк
     float temperature = tempString.toFloat();
 
     if (tempString.length() > 0) {
-      mesh.sendBroadcast("A5");      // обратна связь активації AUTO moda
+      sendB("A5");      // обратна связь активації AUTO moda
 
       if (extempflag) {
         float diff = extemp - temperature;
@@ -257,11 +260,14 @@ void receivedCallback( uint32_t from, String &msg ) {          // прийомк
 
     String tempString = str1.substring(2); // Отримуємо підрядок після перших двох символів
     if (tempString.length() > 0) {
-      mesh.sendBroadcast("R5" + tempString); // тут наверно нада поміняти на екстемп
+      sendB("R5" + tempString); // тут наверно нада поміняти на екстемп
       extemp = tempString.toFloat();    // устанавлюем підтримувану температуру
     }
   }
+
 }
+
+
 
 
 void setup() {
@@ -290,6 +296,13 @@ void setup() {
 }
 
 void loop() {
+  // --- deferred CRC queue processing (addressed) ---
+  for (uint8_t __i=0; __i<3; ++__i){
+    uint32_t __from; String __body;
+    if (!qPop2(__from, __body)) break;
+    handleBodyFrom(__from, __body);
+  }
+
 
   safetimer ();
   heatcore ();
