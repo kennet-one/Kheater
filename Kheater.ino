@@ -12,7 +12,7 @@
 // таймер последбнього ауто пакету шоб виключав нагрев
 
 #include "painlessMesh.h" // фай фай меш
-#include "CRCMASH.h"
+#include "CRC.h"
 #include <U8g2lib.h> // бібліотека дистплея
 #include <Wire.h>  // I2C
 #include "mash_parameter.h"
@@ -21,6 +21,12 @@
 U8G2_SH1106_128X64_NONAME_F_HW_I2C u8g2(U8G2_R0, /* reset=*/ U8X8_PIN_NONE); // який і як підключаний дисплей
 
 Scheduler userScheduler;
+painlessMesh mesh; 
+
+unsigned long previousMillis = 0;
+const long intervaldelay = 20000; 
+bool messageSent = false;  // Прапорець для відстеження відправки повідомлення
+
 unsigned long he4t = 0;      // часті таймера для безпечного іимкнення
 bool he4timer = false;       //
 
@@ -116,58 +122,45 @@ void rotaation () { // обороти корпуса
   sendB("09" + (rotatos ? String("1") : String("0")));
 }
 
+void handleBody(const String &msg ) {
 
-
-// === Deferred handler: original callback body moved here (works on verified 'body') ===
-void handleBodyFrom(uint32_t from, const String& body){
-          // прийомка MASH сеті
-  String str1 = body;
-  String str2 = "he0";
-  String str3 = "he1";
-  String str4 = "he2";
-  String str5 = "he3";
-  String str6 = "he4";
-  String str7 = "he5";
-  String str8 = "hero";
-  String str9 = "heho";
-
-  if (str1.equals(str2)) { // просто кулер
+  if (msg.equals("he0")) { // просто кулер
     heat = HE0;
     heatfeedback();
   }
-  else if (str1.equals(str3)) { // кулер + нагрів L
+  else if (msg.equals("he1")) { // кулер + нагрів L
     heat = HE1;
     heatfeedback();
   }
-  else if (str1.equals(str4)) { // кулер + нагрів H
+  else if (msg.equals("he2")) { // кулер + нагрів H
     heat = HE2;
     heatfeedback();
   }
-  else if (str1.equals(str5)) { // кулер + нагрів L + H
+  else if (msg.equals("he3")) { // кулер + нагрів L + H
     heat = HE3;
     heatfeedback();
   }
-  else if (str1.equals(str7)) { // вкл ауто мод
+  else if (msg.equals("he5")) { // вкл ауто мод
     extempflag = true;
   }
-  else if (str1.equals(str6)) { // виключено
+  else if (msg.equals("he4")) { // виключено
     heat = HE0;
     he4t = millis();
     he4timer = true;
     heatfeedback();
     extempflag = false;
   }
-  else if (str1.equals(str8)) { // оборот корпуса
+  else if (msg.equals("hero")) { // оборот корпуса
     rotaation();
   }
-  else if (str1.equals(str9)) { // eho
+  else if (msg.equals("heho")) { // eho
     heatfeedback();
     sendB("09" + (rotatos ? String("1") : String("0")));     // обратна связь оборота корпуса
     sendB("R5" + String(extemp));                            // обратна связь усттановляної тесператури для підтримування
   }
-  else if (str1.startsWith("05")) {  // AUTO мод
+  else if (msg.startsWith("05")) {  // AUTO мод
 
-    String tempString = str1.substring(2); // Отримуємо підрядок після перших двох символів
+    String tempString = msg.substring(2); // Отримуємо підрядок після перших двох символів
     float temperature = tempString.toFloat();
 
     if (tempString.length() > 0) {
@@ -188,22 +181,20 @@ void handleBodyFrom(uint32_t from, const String& body){
       }
     }
   }
-  else if (str1.startsWith("W5")) { // тут устанавлюем яку температуру буде підтримувати AUTO мод
+  else if (msg.startsWith("W5")) { // тут устанавлюем яку температуру буде підтримувати AUTO мод
 
-    String tempString = str1.substring(2); // Отримуємо підрядок після перших двох символів
+    String tempString = msg.substring(2); // Отримуємо підрядок після перших двох символів
     if (tempString.length() > 0) {
       sendB("R5" + tempString); // тут наверно нада поміняти на екстемп
       extemp = tempString.toFloat();    // устанавлюем підтримувану температуру
     }
   }
-
 }
-
-
-
 
 void setup() {
   Serial.begin(115200);
+
+  WiFi.setSleep(false);
 
   pinMode(13, OUTPUT); //реле кулера
   pinMode(26, OUTPUT); //реле обороту корпуса
@@ -228,12 +219,19 @@ void setup() {
 }
 
 void loop() {
-  // --- deferred CRC queue processing (addressed) ---
-  for (uint8_t __i=0; __i<3; ++__i){
-    uint32_t __from; String __body;
-    if (!qPop2(__from, __body)) break;
-    handleBodyFrom(__from, __body);
+
+  if (!messageSent) { // Перевіряємо, чи повідомлення ще не було відправлено
+    unsigned long currentMillis = millis();
+
+    if (currentMillis - previousMillis >= intervaldelay) {
+      heatfeedback();
+      // Встановлюємо прапорець, щоб більше не відправляти повідомлення
+      messageSent = true;
+    }
   }
+
+  // --- deferred CRC queue processing  ---
+  for (uint8_t _i=0; _i<4; ++_i){ String _b; if (!qPop(_b)) break; handleBody(_b); }
 
   safetimer ();
   heatcore ();
