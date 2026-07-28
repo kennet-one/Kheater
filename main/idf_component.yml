@@ -1,0 +1,9 @@
+dependencies:
+  keemash_mesh_core:
+    git: https://github.com/kennet-one/keemash_core.git
+    path: .
+    version: v0.5.5
+  u8g2:
+    git: https://github.com/olikraus/u8g2.git
+    path: .
+    version: 2.37.1

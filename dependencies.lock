@@ -1,0 +1,29 @@
+dependencies:
+  idf:
+    source:
+      type: idf
+    version: 6.0.1
+  keemash_mesh_core:
+    component_hash: a131965f2e803ce497bb33bf3a3decf94b4800d5e4a67e0f20da7d68b4fe654e
+    dependencies:
+    - name: idf
+      version: '>=6.0.1,<6.1'
+    source:
+      git: https://github.com/kennet-one/keemash_core.git
+      path: .
+      type: git
+    version: c475e383ce78c0e26dfed2988591ae6d7b837e19
+  u8g2:
+    component_hash: c8acbc53f3b573d081434cfe0454d2a0e678834f7979364a5ee254399556cb52
+    dependencies: []
+    source:
+      git: https://github.com/olikraus/u8g2.git
+      path: .
+      type: git
+    version: 414efcdb7a908667ea461c9e3a3a31da14fc4ea5
+direct_dependencies:
+- keemash_mesh_core
+- u8g2
+manifest_hash: bc8aa0ee61baf2237f6115971956c9ebeef9d31a9900bc935f34c6c628577e2c
+target: esp32
+version: 3.0.0
