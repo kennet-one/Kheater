@@ -27,6 +27,7 @@
 #include "heater_controller.h"
 #include "heater_display.h"
 #include "heater_output.h"
+#include "heater_status_publisher.h"
 #include "legacy_proto.h"
 #include "mesh_log_stream.h"
 #include "mesh_proto.h"
@@ -631,6 +632,11 @@ void app_main(void)
 	err = heater_display_start();
 	if (err != ESP_OK) {
 		ESP_LOGW(TAG, "display unavailable: %s; controller remains active",
+			 esp_err_to_name(err));
+	}
+	err = heater_status_publisher_start();
+	if (err != ESP_OK) {
+		ESP_LOGW(TAG, "status publisher unavailable: %s",
 			 esp_err_to_name(err));
 	}
 

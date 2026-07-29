@@ -6,6 +6,7 @@ idf_component_register(
         "heater_policy.c"
         "heater_controller.c"
         "heater_display.c"
+        "heater_status_publisher.c"
         "legacy_proto.c"
         "legacy_root_sender.c"
     PRIV_REQUIRES

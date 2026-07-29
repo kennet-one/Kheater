@@ -76,6 +76,45 @@ static void format_status(char *out, size_t out_size,
 		 (unsigned long)status->manual_timeout_count);
 }
 
+static void format_status_token_from_snapshot(
+	char *out, size_t out_size, const heater_controller_status_t *status)
+{
+	if (!out || out_size == 0 || !status) return;
+	char temperature[8];
+	if (status->temperature_valid) {
+		snprintf(temperature, sizeof(temperature), "%ld",
+			 (long)lroundf(status->temperature_c * 10.0f));
+	} else {
+		snprintf(temperature, sizeof(temperature), "?");
+	}
+	snprintf(out, out_size,
+		 "H5m%ua%uf%ul%uh%ur%uv%uc%us%ut%s",
+		 (unsigned)status->mode, status->auto_enabled ? 1U : 0U,
+		 status->outputs.fan ? 1U : 0U,
+		 status->outputs.heat_low ? 1U : 0U,
+		 status->outputs.heat_high ? 1U : 0U,
+		 status->outputs.rotation ? 1U : 0U,
+		 status->temperature_valid ? 1U : 0U,
+		 status->cooldown_active ? 1U : 0U,
+		 (unsigned)status->stop_reason, temperature);
+	out[out_size - 1] = '\0';
+}
+
+void legacy_format_status_token(char *out, size_t out_size)
+{
+	heater_controller_status_t status;
+	heater_controller_get_status(&status);
+	format_status_token_from_snapshot(out, out_size, &status);
+}
+
+static void add_status_reply(kheater_command_result_t *result,
+			     const heater_controller_status_t *status)
+{
+	char reply[KHEATER_LEGACY_REPLY_LEN];
+	format_status_token_from_snapshot(reply, sizeof(reply), status);
+	add_reply(result, reply);
+}
+
 bool legacy_execute_command(const char *text, kheater_command_result_t *result)
 {
 	if (!text || !text[0] || !result) return false;
@@ -107,6 +146,7 @@ bool legacy_execute_command(const char *text, kheater_command_result_t *result)
 		add_reply(result, reply);
 		snprintf(result->result, sizeof(result->result), "rotation=%u",
 			 status.outputs.rotation ? 1U : 0U);
+		if (result->error == ESP_OK) add_status_reply(result, &status);
 		return true;
 	} else if (strcmp(text, "heho") == 0) {
 		heater_controller_get_status(&status);
@@ -117,10 +157,12 @@ bool legacy_execute_command(const char *text, kheater_command_result_t *result)
 		add_reply(result, reply);
 		snprintf(reply, sizeof(reply), "R5%.1f", status.setpoint_c);
 		add_reply(result, reply);
+		add_status_reply(result, &status);
 		format_status(result->result, sizeof(result->result), &status);
 		return true;
 	} else if (strcmp(text, "heater.status") == 0) {
 		heater_controller_get_status(&status);
+		add_status_reply(result, &status);
 		format_status(result->result, sizeof(result->result), &status);
 		return true;
 	} else if (strncmp(text, "W5", 2) == 0) {
@@ -152,6 +194,7 @@ bool legacy_execute_command(const char *text, kheater_command_result_t *result)
 			 ? (status.auto_enabled ? "AUTO temperature accepted"
 						: "temperature ignored; AUTO disabled")
 			 : "invalid external temperature");
+		if (result->error == ESP_OK) add_status_reply(result, &status);
 		return true;
 	} else {
 		return false;
@@ -160,6 +203,7 @@ bool legacy_execute_command(const char *text, kheater_command_result_t *result)
 	heater_controller_get_status(&status);
 	if (result->error == ESP_OK) {
 		add_mode_reply(result, &status);
+		add_status_reply(result, &status);
 		format_status(result->result, sizeof(result->result), &status);
 	} else {
 		snprintf(result->result, sizeof(result->result), "%s",
