@@ -27,7 +27,9 @@ startup. The autonomous controller continues running if mesh startup fails.
 - legacy V1 text retained as a compatibility adapter
 
 Boot always starts with heating, fan, rotation and AUTO disabled. Only the
-setpoint is persistent; its default is `26.7 C`.
+setpoint defaults to `26.7 C`. Existing installations keep target persistence
+enabled. The desktop can disable it; in that mode a reboot restores the default
+target while heater mode, AUTO and outputs always remain OFF.
 
 ## Commands
 
@@ -42,6 +44,7 @@ setpoint is persistent; its default is `26.7 C`.
 | `hero` | toggle rotation when no cooldown is active |
 | `heho` | publish legacy mode, rotation and setpoint state |
 | `W5...` | set target in the `5..35 C` range |
+| `P50`, `P51` | disable or enable target persistence across reboot |
 | `05...` | provide external temperature in the `-40..80 C` range |
 | `heater.status` | read-only detailed diagnostic snapshot |
 

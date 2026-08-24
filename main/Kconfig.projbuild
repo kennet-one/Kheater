@@ -225,6 +225,13 @@ menu "Kheater Configuration"
             range 50 350
             default 267
 
+        config KHEATER_SETPOINT_PERSIST_DEFAULT
+            bool "Persist target temperature by default"
+            default y
+            help
+                Keeps compatibility with existing firmware. The runtime P50/P51
+                command can disable or enable target persistence explicitly.
+
         config KHEATER_SETPOINT_MIN_X10
             int "Minimum setpoint in tenths of a degree C"
             range -400 800
