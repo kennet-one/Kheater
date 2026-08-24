@@ -5,6 +5,7 @@ idf_component_register(
         "heater_output.c"
         "heater_policy.c"
         "heater_controller.c"
+        "heater_schedule.c"
         "heater_display.c"
         "heater_status_publisher.c"
         "legacy_proto.c"

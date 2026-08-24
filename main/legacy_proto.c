@@ -1,6 +1,7 @@
 #include "legacy_proto.h"
 
 #include <errno.h>
+#include <inttypes.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -8,6 +9,7 @@
 
 #include "esp_log.h"
 #include "heater_controller.h"
+#include "heater_schedule.h"
 #include "legacy_root_sender.h"
 
 static const char *TAG = "legacy";
@@ -31,6 +33,140 @@ static void add_reply(kheater_command_result_t *result, const char *reply)
 	snprintf(result->replies[result->reply_count],
 		 sizeof(result->replies[result->reply_count]), "%s", reply);
 	result->reply_count++;
+}
+
+static bool parse_hex_field(const char *text, size_t offset, size_t digits,
+			    uint32_t *value)
+{
+	if (!text || !value || digits == 0 || digits > 8) return false;
+	uint32_t parsed = 0;
+	for (size_t i = 0; i < digits; i++) {
+		char c = text[offset + i];
+		uint8_t nibble;
+		if (c >= '0' && c <= '9') nibble = (uint8_t)(c - '0');
+		else if (c >= 'a' && c <= 'f') nibble = (uint8_t)(c - 'a' + 10);
+		else if (c >= 'A' && c <= 'F') nibble = (uint8_t)(c - 'A' + 10);
+		else return false;
+		parsed = (parsed << 4) | nibble;
+	}
+	*value = parsed;
+	return true;
+}
+
+static void format_schedule_meta(char *out, size_t out_size,
+				 const heater_schedule_status_t *status)
+{
+	uint8_t active = status->active_index == HEATER_SCHEDULE_NO_INDEX
+		? 0x0fU : status->active_index;
+	uint8_t next = status->next_index == HEATER_SCHEDULE_NO_INDEX
+		? 0x0fU : status->next_index;
+	snprintf(out, out_size, "S5M%08" PRIX32 "%X%u%u%u%X%X",
+		 status->config.generation, (unsigned)status->config.count,
+		 status->config.enabled ? 1U : 0U,
+		 status->config.persistence_enabled ? 1U : 0U,
+		 status->clock_valid ? 1U : 0U, (unsigned)active, (unsigned)next);
+}
+
+static void format_schedule_point(char *out, size_t out_size, uint32_t generation,
+				  uint8_t index,
+				  const heater_schedule_point_t *point)
+{
+	snprintf(out, out_size, "S5P%08" PRIX32 "%X%u%03X%03X%X%02X",
+		 generation, (unsigned)index, point->enabled ? 1U : 0U,
+		 (unsigned)point->minute_of_day, (unsigned)(uint16_t)point->target_x10,
+		 (unsigned)point->action, (unsigned)point->days_mask);
+}
+
+static bool execute_schedule_command(const char *text,
+				     kheater_command_result_t *result)
+{
+	size_t length = strlen(text);
+	uint32_t generation = 0;
+	if (length == 14 && strncmp(text, "S5B", 3) == 0) {
+		uint32_t count = 0, enabled = 0, persist = 0;
+		if (!parse_hex_field(text, 3, 8, &generation) ||
+		    !parse_hex_field(text, 11, 1, &count) ||
+		    !parse_hex_field(text, 12, 1, &enabled) ||
+		    !parse_hex_field(text, 13, 1, &persist) ||
+		    count > HEATER_SCHEDULE_MAX_POINTS || enabled > 1 || persist > 1) {
+			result->error = ESP_ERR_INVALID_ARG;
+		} else {
+			result->error = heater_schedule_stage_begin(generation, (uint8_t)count,
+							     enabled != 0, persist != 0);
+		}
+	} else if (length == 22 && strncmp(text, "S5P", 3) == 0) {
+		uint32_t index = 0, enabled = 0, minute = 0, target = 0, action = 0, days = 0;
+		if (!parse_hex_field(text, 3, 8, &generation) ||
+		    !parse_hex_field(text, 11, 1, &index) ||
+		    !parse_hex_field(text, 12, 1, &enabled) ||
+		    !parse_hex_field(text, 13, 3, &minute) ||
+		    !parse_hex_field(text, 16, 3, &target) ||
+		    !parse_hex_field(text, 19, 1, &action) ||
+		    !parse_hex_field(text, 20, 2, &days) || enabled > 1 ||
+		    index >= HEATER_SCHEDULE_MAX_POINTS || target > INT16_MAX) {
+			result->error = ESP_ERR_INVALID_ARG;
+		} else {
+			heater_schedule_point_t point = {
+				.enabled = enabled != 0,
+				.minute_of_day = (uint16_t)minute,
+				.target_x10 = (int16_t)target,
+				.action = (heater_schedule_action_t)action,
+				.days_mask = (uint8_t)days,
+			};
+			result->error = heater_schedule_stage_point(generation, (uint8_t)index,
+							     &point);
+		}
+	} else if (length == 11 && strncmp(text, "S5C", 3) == 0) {
+		if (!parse_hex_field(text, 3, 8, &generation)) {
+			result->error = ESP_ERR_INVALID_ARG;
+		} else {
+			result->error = heater_schedule_stage_commit(generation);
+			if (result->error == ESP_OK) {
+				heater_schedule_status_t status;
+				heater_schedule_get_status(&status);
+				char reply[KHEATER_LEGACY_REPLY_LEN];
+				format_schedule_meta(reply, sizeof(reply), &status);
+				add_reply(result, reply);
+			}
+		}
+	} else if (length == 3 && strcmp(text, "S5Q") == 0) {
+		heater_schedule_status_t status;
+		heater_schedule_get_status(&status);
+		char reply[KHEATER_LEGACY_REPLY_LEN];
+		format_schedule_meta(reply, sizeof(reply), &status);
+		add_reply(result, reply);
+		snprintf(result->result, sizeof(result->result), "%s", reply);
+		return true;
+	} else if (length == 4 && strncmp(text, "S5Q", 3) == 0) {
+		uint32_t index = 0;
+		if (!parse_hex_field(text, 3, 1, &index)) {
+			result->error = ESP_ERR_INVALID_ARG;
+		} else {
+			heater_schedule_status_t status;
+			heater_schedule_get_status(&status);
+			if (index >= status.config.count) {
+				result->error = ESP_ERR_NOT_FOUND;
+			} else {
+				char reply[KHEATER_LEGACY_REPLY_LEN];
+				format_schedule_point(reply, sizeof(reply), status.config.generation,
+						      (uint8_t)index,
+						      &status.config.points[index]);
+				add_reply(result, reply);
+				snprintf(result->result, sizeof(result->result), "%s", reply);
+				return true;
+			}
+		}
+	} else {
+		return false;
+	}
+
+	if (result->error == ESP_OK) {
+		snprintf(result->result, sizeof(result->result), "accepted");
+	} else {
+		snprintf(result->result, sizeof(result->result), "%s",
+			 esp_err_to_name(result->error));
+	}
+	return true;
 }
 
 static void add_mode_reply(kheater_command_result_t *result,
@@ -125,6 +261,7 @@ bool legacy_execute_command(const char *text, kheater_command_result_t *result)
 
 	heater_controller_status_t status;
 	heater_controller_get_status(&status);
+	if (execute_schedule_command(text, result)) return true;
 
 	if (strcmp(text, "he0") == 0) {
 		result->error = heater_controller_set_manual(HEATER_MODE_FAN);

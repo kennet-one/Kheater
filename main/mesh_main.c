@@ -27,6 +27,7 @@
 #include "heater_controller.h"
 #include "heater_display.h"
 #include "heater_output.h"
+#include "heater_schedule.h"
 #include "heater_status_publisher.h"
 #include "legacy_proto.h"
 #include "mesh_log_stream.h"
@@ -628,6 +629,11 @@ void app_main(void)
 		ESP_LOGE(TAG, "heater controller initialization failed: %s",
 			 esp_err_to_name(err));
 		abort();
+	}
+	err = heater_schedule_start();
+	if (err != ESP_OK) {
+		ESP_LOGW(TAG, "heater schedule unavailable: %s; controller remains active",
+			 esp_err_to_name(err));
 	}
 	err = heater_display_start();
 	if (err != ESP_OK) {

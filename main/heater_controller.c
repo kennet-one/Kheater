@@ -339,13 +339,13 @@ esp_err_t heater_controller_reject_temperature(void)
 	return ESP_ERR_INVALID_ARG;
 }
 
-esp_err_t heater_controller_set_setpoint(float setpoint_c)
+static esp_err_t set_setpoint(float setpoint_c, bool persist)
 {
 	if (!setpoint_in_range(setpoint_c)) return ESP_ERR_INVALID_ARG;
 	if (!s_lock || xSemaphoreTake(s_lock, pdMS_TO_TICKS(500)) != pdTRUE) {
 		return ESP_ERR_TIMEOUT;
 	}
-	if (s_state.setpoint_persistence_enabled) {
+	if (persist && s_state.setpoint_persistence_enabled) {
 		esp_err_t save_err = save_setpoint(setpoint_c);
 		if (save_err != ESP_OK) {
 			s_state.last_error = save_err;
@@ -359,6 +359,16 @@ esp_err_t heater_controller_set_setpoint(float setpoint_c)
 	}
 	xSemaphoreGive(s_lock);
 	return ESP_OK;
+}
+
+esp_err_t heater_controller_set_setpoint(float setpoint_c)
+{
+	return set_setpoint(setpoint_c, true);
+}
+
+esp_err_t heater_controller_set_setpoint_runtime(float setpoint_c)
+{
+	return set_setpoint(setpoint_c, false);
 }
 
 esp_err_t heater_controller_set_setpoint_persistence(bool enabled)
