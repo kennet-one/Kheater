@@ -12,6 +12,8 @@
 #include "heater_schedule.h"
 #include "legacy_root_sender.h"
 
+#define SCHEDULE_TIME_SYNC_STALE_MS 60000U
+
 static const char *TAG = "legacy";
 
 static bool parse_float_strict(const char *text, float *value)
@@ -65,6 +67,43 @@ static void format_schedule_meta(char *out, size_t out_size,
 		 status->config.enabled ? 1U : 0U,
 		 status->config.persistence_enabled ? 1U : 0U,
 		 status->clock_valid ? 1U : 0U, (unsigned)active, (unsigned)next);
+}
+
+static void format_schedule_diagnostic(char *out, size_t out_size,
+				       const heater_schedule_status_t *status)
+{
+	uint8_t flags = (status->clock_valid ? 1U : 0U) |
+		(status->config.enabled ? 2U : 0U) |
+		(status->config.persistence_enabled ? 4U : 0U) |
+		(status->catch_up_pending ? 8U : 0U) |
+		(status->last_apply_valid ? 16U : 0U) |
+		(status->time_sync_age_ms > SCHEDULE_TIME_SYNC_STALE_MS ? 32U : 0U);
+	uint8_t weekday = status->local_weekday <= 6U ? status->local_weekday : 0x0fU;
+	uint16_t minute = status->local_minute < 1440U ? status->local_minute : 0x0fffU;
+	uint8_t last = status->last_apply_valid && status->last_apply_index < 8U ?
+		status->last_apply_index : 0x0fU;
+	uint8_t kind = status->last_apply_valid ? status->last_apply_kind : 0U;
+	uint32_t age_s = status->last_apply_valid ? status->last_apply_age_ms / 1000U :
+		0xffffU;
+	if (age_s > 0xffffU) age_s = 0xffffU;
+	snprintf(out, out_size, "S5D%08" PRIX32 "%02X%X%03X%X%X%04X%04X",
+		 status->config.generation, (unsigned)flags, (unsigned)weekday,
+		 (unsigned)minute, (unsigned)last, (unsigned)kind,
+		 (unsigned)((uint32_t)status->last_error & 0xffffU), (unsigned)age_s);
+}
+
+void legacy_format_schedule_meta_token(char *out, size_t out_size)
+{
+	heater_schedule_status_t status;
+	heater_schedule_get_status(&status);
+	format_schedule_meta(out, out_size, &status);
+}
+
+void legacy_format_schedule_diagnostic_token(char *out, size_t out_size)
+{
+	heater_schedule_status_t status;
+	heater_schedule_get_status(&status);
+	format_schedule_diagnostic(out, out_size, &status);
 }
 
 static void format_schedule_point(char *out, size_t out_size, uint32_t generation,
@@ -129,6 +168,14 @@ static bool execute_schedule_command(const char *text,
 				add_reply(result, reply);
 			}
 		}
+	} else if (length == 3 && strcmp(text, "S5D") == 0) {
+		heater_schedule_status_t status;
+		heater_schedule_get_status(&status);
+		char reply[KHEATER_LEGACY_REPLY_LEN];
+		format_schedule_diagnostic(reply, sizeof(reply), &status);
+		add_reply(result, reply);
+		snprintf(result->result, sizeof(result->result), "%s", reply);
+		return true;
 	} else if (length == 3 && strcmp(text, "S5Q") == 0) {
 		heater_schedule_status_t status;
 		heater_schedule_get_status(&status);

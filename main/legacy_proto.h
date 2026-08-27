@@ -20,3 +20,5 @@ bool legacy_execute_command(const char *text, kheater_command_result_t *result);
 bool legacy_handle_command(const char *text);
 void legacy_handle_text(const char *text);
 void legacy_format_status_token(char *out, size_t out_size);
+void legacy_format_schedule_meta_token(char *out, size_t out_size);
+void legacy_format_schedule_diagnostic_token(char *out, size_t out_size);
