@@ -32,13 +32,12 @@ static i2c_master_dev_handle_t s_device;
 static u8g2_t s_u8g2;
 static uint8_t s_tx_buffer[DISPLAY_TX_BUFFER];
 static size_t s_tx_length;
-static uint8_t s_dc;
 static TaskHandle_t s_task;
 static uint32_t s_tx_error_count;
 
 static bool flush_i2c(void)
 {
-	if (!s_device || s_tx_length <= 1) {
+	if (!s_device || s_tx_length == 0) {
 		s_tx_length = 0;
 		return true;
 	}
@@ -62,11 +61,10 @@ static uint8_t u8x8_byte_i2c(u8x8_t *u8x8, uint8_t message,
 	case U8X8_MSG_BYTE_INIT:
 		return 1;
 	case U8X8_MSG_BYTE_SET_DC:
-		s_dc = arg_int;
+		/* The SSD13xx I2C CAD layer emits its own 0x00/0x40 control byte. */
 		return 1;
 	case U8X8_MSG_BYTE_START_TRANSFER:
-		s_tx_length = 1;
-		s_tx_buffer[0] = s_dc ? 0x40 : 0x00;
+		s_tx_length = 0;
 		return 1;
 	case U8X8_MSG_BYTE_SEND: {
 		const uint8_t *bytes = arg_ptr;
@@ -74,9 +72,7 @@ static uint8_t u8x8_byte_i2c(u8x8_t *u8x8, uint8_t message,
 			size_t available = sizeof(s_tx_buffer) - s_tx_length;
 			if (available == 0) {
 				if (!flush_i2c()) return 0;
-				s_tx_length = 1;
-				s_tx_buffer[0] = s_dc ? 0x40 : 0x00;
-				available = sizeof(s_tx_buffer) - 1;
+				available = sizeof(s_tx_buffer);
 			}
 			size_t chunk = arg_int < available ? arg_int : available;
 			memcpy(s_tx_buffer + s_tx_length, bytes, chunk);
