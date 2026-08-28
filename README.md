@@ -20,11 +20,15 @@ startup. The autonomous controller continues running if mesh startup fails.
 ## Runtime
 
 - ESP-IDF 6.0.1, target `esp32`
-- pinned `keemash_mesh_core v0.5.5`
+- pinned `keemash_mesh_core v0.8.2`
 - pinned U8g2 `2.37.1`
 - A/B OTA layout with two 1984 KB app slots and rollback
 - reliable V2 NODEINFO, TOPOLOGY, LOG, TASK, MEMORY, TIME, CONTROL and OTA
 - legacy V1 text retained as a compatibility adapter
+
+The SH1106 shows the original 64x64 power-on logo for three seconds, then a
+live status view with mesh state, heater mode, current and target temperature,
+output indicators and the most important safety or schedule state.
 
 Boot always starts with heating, fan, rotation and AUTO disabled. Only the
 setpoint defaults to `26.7 C`. Existing installations keep target persistence

@@ -10,6 +10,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "heater_controller.h"
+#include "heater_schedule.h"
 #include "sdkconfig.h"
 #include "u8g2.h"
 
@@ -33,6 +34,7 @@ static uint8_t s_tx_buffer[DISPLAY_TX_BUFFER];
 static size_t s_tx_length;
 static uint8_t s_dc;
 static TaskHandle_t s_task;
+static uint32_t s_tx_error_count;
 
 static bool flush_i2c(void)
 {
@@ -42,6 +44,13 @@ static bool flush_i2c(void)
 	}
 	esp_err_t err = i2c_master_transmit(s_device, s_tx_buffer, s_tx_length, 100);
 	s_tx_length = 0;
+	if (err != ESP_OK) {
+		s_tx_error_count++;
+		if (s_tx_error_count == 1 || (s_tx_error_count % 32U) == 0) {
+			ESP_LOGW(TAG, "SH1106 transfer failed (%lu): %s",
+				 (unsigned long)s_tx_error_count, esp_err_to_name(err));
+		}
+	}
 	return err == ESP_OK;
 }
 
@@ -108,14 +117,101 @@ static uint8_t u8x8_gpio_delay(u8x8_t *u8x8, uint8_t message,
 static void draw_logo(void)
 {
 	u8g2_ClearBuffer(&s_u8g2);
-	u8g2_DrawXBM(&s_u8g2, 32, 0, 64, 64, logo);
+	/* The original asset uses U8g2 drawBitmap bit order, not XBM bit order. */
+	u8g2_DrawBitmap(&s_u8g2, 32, 0, 8, 64, logo);
 	u8g2_SendBuffer(&s_u8g2);
+}
+
+static void draw_right_aligned(const char *text, uint8_t y)
+{
+	uint16_t width = u8g2_GetStrWidth(&s_u8g2, text);
+	u8g2_DrawStr(&s_u8g2, width < 128U ? 128U - width : 0U, y, text);
+}
+
+static uint8_t draw_output_badge(uint8_t x, const char *label, bool active)
+{
+	uint8_t width = (uint8_t)u8g2_GetStrWidth(&s_u8g2, label) + 6U;
+	if (active) {
+		u8g2_DrawBox(&s_u8g2, x, 43, width, 10);
+		u8g2_SetDrawColor(&s_u8g2, 0);
+		u8g2_DrawStr(&s_u8g2, x + 3U, 51, label);
+		u8g2_SetDrawColor(&s_u8g2, 1);
+	} else {
+		u8g2_DrawFrame(&s_u8g2, x, 43, width, 10);
+		u8g2_DrawStr(&s_u8g2, x + 3U, 51, label);
+	}
+	return (uint8_t)(x + width + 3U);
+}
+
+static const char *schedule_action_name(heater_schedule_action_t action)
+{
+	switch (action) {
+	case HEATER_SCHEDULE_ACTION_OFF: return "OFF";
+	case HEATER_SCHEDULE_ACTION_AUTO: return "AUTO";
+	case HEATER_SCHEDULE_ACTION_FAN: return "FAN";
+	case HEATER_SCHEDULE_ACTION_LOW: return "LOW";
+	case HEATER_SCHEDULE_ACTION_HIGH: return "HIGH";
+	case HEATER_SCHEDULE_ACTION_MAX: return "MAX";
+	case HEATER_SCHEDULE_ACTION_UNCHANGED: return "SET";
+	default: return "?";
+	}
+}
+
+static void format_bottom_line(char *line, size_t line_size,
+			       const heater_controller_status_t *status,
+			       const heater_schedule_status_t *schedule)
+{
+	if (status->cooldown_active) {
+		snprintf(line, line_size, "COOLDOWN %llus",
+			 (unsigned long long)(status->cooldown_remaining_ms / 1000ULL));
+		return;
+	}
+	if (status->stop_reason == HEATER_STOP_TEMP_STALE) {
+		snprintf(line, line_size, "TEMP STALE");
+		return;
+	}
+	if (status->stop_reason == HEATER_STOP_TEMP_INVALID) {
+		snprintf(line, line_size, "TEMP INVALID");
+		return;
+	}
+	if (status->stop_reason == HEATER_STOP_MANUAL_TIMEOUT) {
+		snprintf(line, line_size, "HEAT TIMEOUT");
+		return;
+	}
+	if (status->manual_remaining_ms > 0 &&
+	    (status->mode == HEATER_MODE_LOW || status->mode == HEATER_MODE_HIGH ||
+	     status->mode == HEATER_MODE_MAX)) {
+		snprintf(line, line_size, "LIMIT %llum",
+			 (unsigned long long)(status->manual_remaining_ms / 60000ULL));
+		return;
+	}
+	if (schedule->config.enabled && schedule->clock_valid &&
+	    schedule->next_index < schedule->config.count) {
+		const heater_schedule_point_t *next =
+			&schedule->config.points[schedule->next_index];
+		snprintf(line, line_size, "NEXT %02u:%02u %s",
+			 next->minute_of_day / 60U, next->minute_of_day % 60U,
+			 schedule_action_name(next->action));
+		return;
+	}
+	if (schedule->config.enabled && !schedule->clock_valid) {
+		snprintf(line, line_size, "SCHEDULE WAIT TIME");
+		return;
+	}
+	if (status->auto_enabled && status->temperature_valid) {
+		snprintf(line, line_size, "TEMP AGE %llus",
+			 (unsigned long long)(status->temperature_age_ms / 1000ULL));
+		return;
+	}
+	snprintf(line, line_size, "STANDBY");
 }
 
 static void draw_status(void)
 {
 	heater_controller_status_t status;
+	heater_schedule_status_t schedule;
 	heater_controller_get_status(&status);
+	heater_schedule_get_status(&schedule);
 	bool parent;
 	bool reliable;
 	portENTER_CRITICAL(&s_state_lock);
@@ -124,45 +220,44 @@ static void draw_status(void)
 	portEXIT_CRITICAL(&s_state_lock);
 
 	char line[32];
+	char right[16];
 	u8g2_ClearBuffer(&s_u8g2);
 	u8g2_SetFont(&s_u8g2, u8g2_font_6x10_tf);
-	snprintf(line, sizeof(line), "Kheater %s",
-		 reliable ? "V2" : (parent ? "MESH" : "OFFLINE"));
-	u8g2_DrawStr(&s_u8g2, 0, 9, line);
+	u8g2_DrawStr(&s_u8g2, 0, 9, "KHEATER");
+	snprintf(right, sizeof(right), "%s",
+		 reliable ? "V2" : (parent ? "MESH" : "OFF"));
+	draw_right_aligned(right, 9);
 
 	u8g2_SetFont(&s_u8g2, u8g2_font_helvB14_tf);
 	u8g2_DrawStr(&s_u8g2, 0, 27,
 		     heater_controller_mode_name(status.mode));
+	if (status.temperature_valid) {
+		snprintf(right, sizeof(right), "%.1fC", status.temperature_c);
+	} else {
+		snprintf(right, sizeof(right), "--.-C");
+	}
+	draw_right_aligned(right, 27);
 
 	u8g2_SetFont(&s_u8g2, u8g2_font_6x10_tf);
-	if (status.temperature_valid) {
-		snprintf(line, sizeof(line), "T %.1f  SET %.1f",
-			 status.temperature_c, status.setpoint_c);
-	} else {
-		snprintf(line, sizeof(line), "T ?     SET %.1f", status.setpoint_c);
-	}
+	snprintf(line, sizeof(line), "SET %.1fC", status.setpoint_c);
 	u8g2_DrawStr(&s_u8g2, 0, 39, line);
-
-	snprintf(line, sizeof(line), "F%u L%u H%u R%u",
-		 status.outputs.fan ? 1U : 0U,
-		 status.outputs.heat_low ? 1U : 0U,
-		 status.outputs.heat_high ? 1U : 0U,
-		 status.outputs.rotation ? 1U : 0U);
-	u8g2_DrawStr(&s_u8g2, 0, 50, line);
-
-	if (status.cooldown_active) {
-		snprintf(line, sizeof(line), "COOL %llus",
-			 (unsigned long long)(status.cooldown_remaining_ms / 1000ULL));
-	} else if (status.stop_reason != HEATER_STOP_NONE &&
-		   status.stop_reason != HEATER_STOP_BOOT) {
-		snprintf(line, sizeof(line), "%s",
-			 heater_controller_stop_reason_name(status.stop_reason));
-	} else if (status.auto_enabled && status.temperature_valid) {
-		snprintf(line, sizeof(line), "TEMP AGE %llus",
-			 (unsigned long long)(status.temperature_age_ms / 1000ULL));
+	if (!status.temperature_valid) {
+		snprintf(right, sizeof(right), "NO TEMP");
 	} else {
-		snprintf(line, sizeof(line), "READY");
+		uint64_t age_s = status.temperature_age_ms / 1000ULL;
+		if (age_s > 999ULL) age_s = 999ULL;
+		snprintf(right, sizeof(right), "AGE %llus", (unsigned long long)age_s);
 	}
+	draw_right_aligned(right, 39);
+
+	u8g2_SetFont(&s_u8g2, u8g2_font_5x8_tf);
+	uint8_t x = draw_output_badge(0, "FAN", status.outputs.fan);
+	x = draw_output_badge(x, "LOW", status.outputs.heat_low);
+	x = draw_output_badge(x, "HIGH", status.outputs.heat_high);
+	draw_output_badge(x, "ROT", status.outputs.rotation);
+
+	u8g2_SetFont(&s_u8g2, u8g2_font_6x10_tf);
+	format_bottom_line(line, sizeof(line), &status, &schedule);
 	u8g2_DrawStr(&s_u8g2, 0, 62, line);
 	u8g2_SendBuffer(&s_u8g2);
 }
@@ -217,6 +312,7 @@ esp_err_t heater_display_start(void)
 		&s_u8g2, U8G2_R0, u8x8_byte_i2c, u8x8_gpio_delay);
 	u8g2_InitDisplay(&s_u8g2);
 	u8g2_SetPowerSave(&s_u8g2, 0);
+	u8g2_SetBitmapMode(&s_u8g2, 0);
 	u8g2_ClearDisplay(&s_u8g2);
 	if (xTaskCreate(display_task, "heater_display", 4096, NULL, 3, &s_task) != pdPASS) {
 		return ESP_ERR_NO_MEM;

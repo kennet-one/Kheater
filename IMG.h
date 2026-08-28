@@ -1,6 +1,6 @@
-const uint16_t logo_widht PROGMEM = 64; // Размер в пикселях, а не в байтах
+const uint16_t logo_widht PROGMEM = 64; // Dimensions are in pixels.
 const uint16_t logo_height PROGMEM = 64;
-const uint8_t logo[512] PROGMEM = {           // лого при включенні
+const uint8_t logo[512] PROGMEM = {           // Original power-on logo.
   0b00100101, 0b00100100, 0b10001010, 0b10000000, 0b00001110, 0b00001000, 0b00000000, 0b10100100,
   0b10010010, 0b01001001, 0b00100000, 0b00010000, 0b00011111, 0b01111100, 0b00100110, 0b00101010,
   0b01001001, 0b00100100, 0b00101001, 0b00000000, 0b00011111, 0b11101100, 0b00001000, 0b10010101,
