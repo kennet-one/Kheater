@@ -181,6 +181,10 @@ static void format_bottom_line(char *line, size_t line_size,
 			 (unsigned long long)(status->manual_remaining_ms / 60000ULL));
 		return;
 	}
+	if (status->auto_enabled && !status->temperature_valid) {
+		snprintf(line, line_size, "WAIT TEMP");
+		return;
+	}
 	if (schedule->config.enabled && schedule->clock_valid &&
 	    schedule->next_index < schedule->config.count) {
 		const heater_schedule_point_t *next =
@@ -219,32 +223,27 @@ static void draw_status(void)
 	char right[16];
 	u8g2_ClearBuffer(&s_u8g2);
 	u8g2_SetFont(&s_u8g2, u8g2_font_6x10_tf);
-	u8g2_DrawStr(&s_u8g2, 0, 9, "KHEATER");
-	snprintf(right, sizeof(right), "%s",
+	snprintf(line, sizeof(line), "KHEATER %s",
 		 reliable ? "V2" : (parent ? "MESH" : "OFF"));
-	draw_right_aligned(right, 9);
+	u8g2_DrawStr(&s_u8g2, 0, 9, line);
 
 	u8g2_SetFont(&s_u8g2, u8g2_font_helvB14_tf);
 	u8g2_DrawStr(&s_u8g2, 0, 27,
 		     heater_controller_mode_name(status.mode));
 	if (status.temperature_valid) {
 		snprintf(right, sizeof(right), "%.1fC", status.temperature_c);
-	} else {
-		snprintf(right, sizeof(right), "--.-C");
+		draw_right_aligned(right, 27);
 	}
-	draw_right_aligned(right, 27);
 
 	u8g2_SetFont(&s_u8g2, u8g2_font_6x10_tf);
 	snprintf(line, sizeof(line), "SET %.1fC", status.setpoint_c);
 	u8g2_DrawStr(&s_u8g2, 0, 39, line);
-	if (!status.temperature_valid) {
-		snprintf(right, sizeof(right), "NO TEMP");
-	} else {
+	if (status.temperature_valid) {
 		uint64_t age_s = status.temperature_age_ms / 1000ULL;
 		if (age_s > 999ULL) age_s = 999ULL;
 		snprintf(right, sizeof(right), "AGE %llus", (unsigned long long)age_s);
+		draw_right_aligned(right, 39);
 	}
-	draw_right_aligned(right, 39);
 
 	u8g2_SetFont(&s_u8g2, u8g2_font_5x8_tf);
 	uint8_t x = draw_output_badge(0, "FAN", status.outputs.fan);
