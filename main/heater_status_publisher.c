@@ -30,10 +30,13 @@ static void status_task(void *arg)
 	char last_sent[KHEATER_LEGACY_REPLY_LEN] = {0};
 	char last_schedule_meta[KHEATER_LEGACY_REPLY_LEN] = {0};
 	char last_schedule_diag_key[KHEATER_LEGACY_REPLY_LEN] = {0};
+	char last_display[KHEATER_LEGACY_REPLY_LEN] = {0};
 	uint64_t last_sent_ms = 0;
 	uint64_t last_attempt_ms = 0;
 	uint64_t last_schedule_sent_ms = 0;
 	uint64_t last_schedule_attempt_ms = 0;
+	uint64_t last_display_sent_ms = 0;
+	uint64_t last_display_attempt_ms = 0;
 
 	for (;;) {
 		char token[KHEATER_LEGACY_REPLY_LEN] = {0};
@@ -77,6 +80,21 @@ static void status_task(void *arg)
 				snprintf(last_schedule_diag_key, sizeof(last_schedule_diag_key), "%s",
 					 schedule_diag_key);
 				last_schedule_sent_ms = now;
+			}
+		}
+
+		char display_token[KHEATER_LEGACY_REPLY_LEN] = {0};
+		legacy_format_display_status_token(display_token, sizeof(display_token));
+		bool display_changed = strcmp(display_token, last_display) != 0;
+		bool display_heartbeat = now - last_display_sent_ms >= STATUS_HEARTBEAT_MS;
+		bool display_retry = now - last_display_attempt_ms >= STATUS_RETRY_MS;
+		if ((display_changed || display_heartbeat) && display_retry) {
+			last_display_attempt_ms = now;
+			esp_err_t err = mesh_v2_node_send_event(0, display_token);
+			if (err != ESP_OK && legacy_send_to_root(display_token)) err = ESP_OK;
+			if (err == ESP_OK) {
+				snprintf(last_display, sizeof(last_display), "%s", display_token);
+				last_display_sent_ms = now;
 			}
 		}
 		vTaskDelay(pdMS_TO_TICKS(STATUS_POLL_MS));

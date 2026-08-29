@@ -9,6 +9,7 @@
 
 #include "esp_log.h"
 #include "heater_controller.h"
+#include "heater_display.h"
 #include "heater_schedule.h"
 #include "legacy_root_sender.h"
 
@@ -294,6 +295,24 @@ void legacy_format_status_token(char *out, size_t out_size)
 	format_status_token_from_snapshot(out, out_size, &status);
 }
 
+void legacy_format_display_status_token(char *out, size_t out_size)
+{
+	heater_display_status_t status;
+	heater_display_get_status(&status);
+	if (!out || out_size == 0) return;
+	snprintf(out, out_size, "D5S%u%u%u", status.available ? 1U : 0U,
+		 status.enabled ? 1U : 0U,
+		 status.persistence_enabled ? 1U : 0U);
+	out[out_size - 1] = '\0';
+}
+
+static void add_display_status_reply(kheater_command_result_t *result)
+{
+	char reply[KHEATER_LEGACY_REPLY_LEN];
+	legacy_format_display_status_token(reply, sizeof(reply));
+	add_reply(result, reply);
+}
+
 static void add_status_reply(kheater_command_result_t *result,
 			     const heater_controller_status_t *status)
 {
@@ -324,6 +343,18 @@ bool legacy_execute_command(const char *text, kheater_command_result_t *result)
 		result->error = heater_controller_set_off();
 	} else if (strcmp(text, "he5") == 0) {
 		result->error = heater_controller_enable_auto();
+	} else if (strlen(text) == 3 && text[0] == 'H' && text[1] == 'R' &&
+		   (text[2] == '0' || text[2] == '1')) {
+		result->error = heater_controller_set_rotation(text[2] == '1');
+		heater_controller_get_status(&status);
+		char reply[KHEATER_LEGACY_REPLY_LEN];
+		snprintf(reply, sizeof(reply), "09%u",
+			 status.outputs.rotation ? 1U : 0U);
+		add_reply(result, reply);
+		snprintf(result->result, sizeof(result->result), "rotation=%u",
+			 status.outputs.rotation ? 1U : 0U);
+		if (result->error == ESP_OK) add_status_reply(result, &status);
+		return true;
 	} else if (strcmp(text, "hero") == 0) {
 		bool enabled = false;
 		result->error = heater_controller_toggle_rotation(&enabled);
@@ -346,12 +377,32 @@ bool legacy_execute_command(const char *text, kheater_command_result_t *result)
 		snprintf(reply, sizeof(reply), "R5%.1f", status.setpoint_c);
 		add_reply(result, reply);
 		add_status_reply(result, &status);
+		add_display_status_reply(result);
 		format_status(result->result, sizeof(result->result), &status);
 		return true;
 	} else if (strcmp(text, "heater.status") == 0) {
 		heater_controller_get_status(&status);
 		add_status_reply(result, &status);
+		add_display_status_reply(result);
 		format_status(result->result, sizeof(result->result), &status);
+		return true;
+	} else if (strlen(text) == 3 && text[0] == 'D' && text[1] == '5' &&
+		   (text[2] == '0' || text[2] == '1')) {
+		result->error = heater_display_set_enabled(text[2] == '1');
+		add_display_status_reply(result);
+		snprintf(result->result, sizeof(result->result), "display=%s",
+			 text[2] == '1' ? "on" : "off");
+		return true;
+	} else if (strlen(text) == 4 && strncmp(text, "D5P", 3) == 0 &&
+		   (text[3] == '0' || text[3] == '1')) {
+		result->error = heater_display_set_persistence(text[3] == '1');
+		add_display_status_reply(result);
+		snprintf(result->result, sizeof(result->result), "display persistence=%s",
+			 text[3] == '1' ? "on" : "off");
+		return true;
+	} else if (strcmp(text, "D5Q") == 0) {
+		add_display_status_reply(result);
+		snprintf(result->result, sizeof(result->result), "display status");
 		return true;
 	} else if (strncmp(text, "W5", 2) == 0) {
 		float setpoint = 0.0f;

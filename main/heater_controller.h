@@ -54,6 +54,7 @@ esp_err_t heater_controller_set_setpoint(float setpoint_c);
 esp_err_t heater_controller_set_setpoint_runtime(float setpoint_c);
 esp_err_t heater_controller_set_setpoint_persistence(bool enabled);
 esp_err_t heater_controller_set_mode_persistence(bool enabled);
+esp_err_t heater_controller_set_rotation(bool enabled);
 esp_err_t heater_controller_toggle_rotation(bool *enabled);
 void heater_controller_get_status(heater_controller_status_t *status);
 const char *heater_controller_mode_name(heater_mode_t mode);

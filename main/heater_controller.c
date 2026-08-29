@@ -491,21 +491,35 @@ esp_err_t heater_controller_set_mode_persistence(bool enabled)
 	return err;
 }
 
+static esp_err_t set_rotation_locked(bool enabled)
+{
+	if (s_state.outputs.rotation == enabled) return ESP_OK;
+	if (s_state.cooldown_active) return ESP_ERR_INVALID_STATE;
+	apply_outputs_locked(s_state.outputs.fan, s_state.outputs.heat_low,
+			     s_state.outputs.heat_high, enabled);
+	return ESP_OK;
+}
+
+esp_err_t heater_controller_set_rotation(bool enabled)
+{
+	if (!s_lock || xSemaphoreTake(s_lock, pdMS_TO_TICKS(500)) != pdTRUE) {
+		return ESP_ERR_TIMEOUT;
+	}
+	esp_err_t err = set_rotation_locked(enabled);
+	xSemaphoreGive(s_lock);
+	return err;
+}
+
 esp_err_t heater_controller_toggle_rotation(bool *enabled)
 {
 	if (!s_lock || xSemaphoreTake(s_lock, pdMS_TO_TICKS(500)) != pdTRUE) {
 		return ESP_ERR_TIMEOUT;
 	}
-	if (s_state.cooldown_active) {
-		xSemaphoreGive(s_lock);
-		return ESP_ERR_INVALID_STATE;
-	}
-	bool rotation = !s_state.outputs.rotation;
-	apply_outputs_locked(s_state.outputs.fan, s_state.outputs.heat_low,
-			     s_state.outputs.heat_high, rotation);
-	if (enabled) *enabled = rotation;
+	bool desired = !s_state.outputs.rotation;
+	esp_err_t err = set_rotation_locked(desired);
+	if (err == ESP_OK && enabled) *enabled = desired;
 	xSemaphoreGive(s_lock);
-	return ESP_OK;
+	return err;
 }
 
 void heater_controller_get_status(heater_controller_status_t *status)

@@ -8,9 +8,11 @@
 #include "esp_rom_sys.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "heater_controller.h"
 #include "heater_schedule.h"
+#include "nvs.h"
 #include "sdkconfig.h"
 #include "u8g2.h"
 
@@ -22,6 +24,8 @@
 #define DISPLAY_I2C_PORT I2C_NUM_0
 #define DISPLAY_TX_BUFFER 192
 #define DISPLAY_REFRESH_MS 500U
+#define DISPLAY_NVS_NAMESPACE "heater_display"
+#define DISPLAY_NVS_STATE_KEY "state"
 
 static const char *TAG = "heater_display";
 static portMUX_TYPE s_state_lock = portMUX_INITIALIZER_UNLOCKED;
@@ -33,7 +37,73 @@ static u8g2_t s_u8g2;
 static uint8_t s_tx_buffer[DISPLAY_TX_BUFFER];
 static size_t s_tx_length;
 static TaskHandle_t s_task;
+static SemaphoreHandle_t s_control_lock;
 static uint32_t s_tx_error_count;
+static heater_display_status_t s_status = {
+	.enabled = true,
+	.last_error = ESP_OK,
+};
+
+typedef struct {
+	bool enabled;
+	bool persistence_enabled;
+} display_preferences_t;
+
+static display_preferences_t load_preferences(void)
+{
+	display_preferences_t preferences = {
+		.enabled = true,
+		.persistence_enabled = false,
+	};
+	nvs_handle_t handle;
+	if (nvs_open(DISPLAY_NVS_NAMESPACE, NVS_READONLY, &handle) != ESP_OK) {
+		return preferences;
+	}
+	uint8_t enabled = 1;
+	if (nvs_get_u8(handle, DISPLAY_NVS_STATE_KEY, &enabled) == ESP_OK && enabled <= 1) {
+		preferences.persistence_enabled = true;
+		preferences.enabled = enabled != 0;
+	}
+	nvs_close(handle);
+	return preferences;
+}
+
+static esp_err_t save_preferences(bool persistence_enabled, bool enabled)
+{
+	nvs_handle_t handle;
+	esp_err_t err = nvs_open(DISPLAY_NVS_NAMESPACE, NVS_READWRITE, &handle);
+	if (err != ESP_OK) return err;
+	/* One NVS entry makes persistence and its value a single atomic update. */
+	if (persistence_enabled) {
+		err = nvs_set_u8(handle, DISPLAY_NVS_STATE_KEY, enabled ? 1U : 0U);
+	} else {
+		err = nvs_erase_key(handle, DISPLAY_NVS_STATE_KEY);
+		if (err == ESP_ERR_NVS_NOT_FOUND) err = ESP_OK;
+	}
+	if (err == ESP_OK) err = nvs_commit(handle);
+	nvs_close(handle);
+	return err;
+}
+
+static void set_start_error(esp_err_t err)
+{
+	if (!s_control_lock || xSemaphoreTake(s_control_lock, pdMS_TO_TICKS(50)) != pdTRUE) {
+		return;
+	}
+	s_status.last_error = err;
+	s_status.available = false;
+	xSemaphoreGive(s_control_lock);
+}
+
+static bool desired_enabled(void)
+{
+	bool enabled = true;
+	if (s_control_lock && xSemaphoreTake(s_control_lock, portMAX_DELAY) == pdTRUE) {
+		enabled = s_status.enabled;
+		xSemaphoreGive(s_control_lock);
+	}
+	return enabled;
+}
 
 static bool flush_i2c(void)
 {
@@ -257,27 +327,8 @@ static void draw_status(void)
 	u8g2_SendBuffer(&s_u8g2);
 }
 
-static void display_task(void *arg)
+static esp_err_t init_display_hardware(void)
 {
-	(void)arg;
-	draw_logo();
-	uint64_t logo_until = (uint64_t)esp_timer_get_time() / 1000ULL +
-			      CONFIG_KHEATER_LOGO_TIME_MS;
-	while ((uint64_t)esp_timer_get_time() / 1000ULL < logo_until) {
-		vTaskDelay(pdMS_TO_TICKS(50));
-	}
-	for (;;) {
-		draw_status();
-		vTaskDelay(pdMS_TO_TICKS(DISPLAY_REFRESH_MS));
-	}
-}
-
-esp_err_t heater_display_start(void)
-{
-#if !CONFIG_KHEATER_DISPLAY_ENABLE
-	return ESP_ERR_NOT_SUPPORTED;
-#else
-	if (s_task) return ESP_OK;
 	i2c_master_bus_config_t bus_config = {
 		.i2c_port = DISPLAY_I2C_PORT,
 		.sda_io_num = CONFIG_KHEATER_I2C_SDA_GPIO,
@@ -294,29 +345,169 @@ esp_err_t heater_display_start(void)
 		.scl_speed_hz = 400000,
 	};
 	err = i2c_master_bus_add_device(s_bus, &device_config, &s_device);
-	if (err != ESP_OK) return err;
+	if (err != ESP_OK) {
+		(void)i2c_del_master_bus(s_bus);
+		s_bus = NULL;
+		return err;
+	}
 	uint8_t probe = 0x00;
 	err = i2c_master_transmit(s_device, &probe, 1, 100);
 	if (err != ESP_OK) {
+		(void)i2c_master_bus_rm_device(s_device);
+		(void)i2c_del_master_bus(s_bus);
+		s_device = NULL;
+		s_bus = NULL;
+	}
+	return err;
+}
+
+static void display_task(void *arg)
+{
+	(void)arg;
+	esp_err_t err = init_display_hardware();
+	if (err != ESP_OK) {
 		ESP_LOGW(TAG, "SH1106 not responding at 0x%02x: %s",
 			 CONFIG_KHEATER_I2C_ADDRESS, esp_err_to_name(err));
-		return err;
+		set_start_error(err);
+		s_task = NULL;
+		vTaskDelete(NULL);
+		return;
 	}
-
 	u8g2_Setup_sh1106_i2c_128x64_noname_f(
 		&s_u8g2, U8G2_R0, u8x8_byte_i2c, u8x8_gpio_delay);
 	u8g2_InitDisplay(&s_u8g2);
 	u8g2_SetPowerSave(&s_u8g2, 0);
 	u8g2_SetBitmapMode(&s_u8g2, 0);
 	u8g2_ClearDisplay(&s_u8g2);
+	if (xSemaphoreTake(s_control_lock, portMAX_DELAY) == pdTRUE) {
+		s_status.available = true;
+		s_status.last_error = ESP_OK;
+		xSemaphoreGive(s_control_lock);
+	}
+
+	/* The boot logo is always visible, independently of saved display state. */
+	draw_logo();
+	uint64_t logo_until = (uint64_t)esp_timer_get_time() / 1000ULL +
+			      CONFIG_KHEATER_LOGO_TIME_MS;
+	while ((uint64_t)esp_timer_get_time() / 1000ULL < logo_until) {
+		(void)ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(50));
+	}
+
+	bool applied_enabled = true;
+	for (;;) {
+		bool enabled = desired_enabled();
+		if (enabled) {
+			if (!applied_enabled) u8g2_SetPowerSave(&s_u8g2, 0);
+			draw_status();
+			applied_enabled = true;
+			(void)ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(DISPLAY_REFRESH_MS));
+		} else {
+			if (applied_enabled) u8g2_SetPowerSave(&s_u8g2, 1);
+			applied_enabled = false;
+			(void)ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+		}
+	}
+}
+
+esp_err_t heater_display_start(void)
+{
+#if !CONFIG_KHEATER_DISPLAY_ENABLE
+	return ESP_ERR_NOT_SUPPORTED;
+#else
+	if (s_task) return ESP_OK;
+	if (!s_control_lock) {
+		s_control_lock = xSemaphoreCreateMutex();
+		if (!s_control_lock) return ESP_ERR_NO_MEM;
+	}
+	display_preferences_t preferences = load_preferences();
+	if (xSemaphoreTake(s_control_lock, portMAX_DELAY) == pdTRUE) {
+		s_status.available = false;
+		s_status.enabled = preferences.enabled;
+		s_status.persistence_enabled = preferences.persistence_enabled;
+		s_status.last_error = ESP_OK;
+		xSemaphoreGive(s_control_lock);
+	}
 	if (xTaskCreate(display_task, "heater_display", 4096, NULL, 3, &s_task) != pdPASS) {
+		set_start_error(ESP_ERR_NO_MEM);
 		return ESP_ERR_NO_MEM;
 	}
-	ESP_LOGI(TAG, "SH1106 ready on SDA=%d SCL=%d addr=0x%02x",
+	ESP_LOGI(TAG, "SH1106 starting on SDA=%d SCL=%d addr=0x%02x persist=%u target=%s",
 		 CONFIG_KHEATER_I2C_SDA_GPIO, CONFIG_KHEATER_I2C_SCL_GPIO,
-		 CONFIG_KHEATER_I2C_ADDRESS);
+		 CONFIG_KHEATER_I2C_ADDRESS,
+		 preferences.persistence_enabled ? 1U : 0U,
+		 preferences.enabled ? "ON" : "OFF");
 	return ESP_OK;
 #endif
+}
+
+esp_err_t heater_display_set_enabled(bool enabled)
+{
+#if !CONFIG_KHEATER_DISPLAY_ENABLE
+	(void)enabled;
+	return ESP_ERR_NOT_SUPPORTED;
+#else
+	if (!s_control_lock || xSemaphoreTake(s_control_lock, pdMS_TO_TICKS(500)) != pdTRUE) {
+		return ESP_ERR_TIMEOUT;
+	}
+	if (!s_status.available) {
+		esp_err_t err = s_status.last_error != ESP_OK ? s_status.last_error : ESP_ERR_INVALID_STATE;
+		xSemaphoreGive(s_control_lock);
+		return err;
+	}
+	if (s_status.persistence_enabled) {
+		esp_err_t err = save_preferences(true, enabled);
+		if (err != ESP_OK) {
+			s_status.last_error = err;
+			xSemaphoreGive(s_control_lock);
+			return err;
+		}
+	}
+	s_status.enabled = enabled;
+	s_status.last_error = ESP_OK;
+	xSemaphoreGive(s_control_lock);
+	if (s_task) xTaskNotifyGive(s_task);
+	return ESP_OK;
+#endif
+}
+
+esp_err_t heater_display_set_persistence(bool enabled)
+{
+#if !CONFIG_KHEATER_DISPLAY_ENABLE
+	(void)enabled;
+	return ESP_ERR_NOT_SUPPORTED;
+#else
+	if (!s_control_lock || xSemaphoreTake(s_control_lock, pdMS_TO_TICKS(500)) != pdTRUE) {
+		return ESP_ERR_TIMEOUT;
+	}
+	if (!s_status.available) {
+		esp_err_t err = s_status.last_error != ESP_OK ? s_status.last_error : ESP_ERR_INVALID_STATE;
+		xSemaphoreGive(s_control_lock);
+		return err;
+	}
+	esp_err_t err = save_preferences(enabled, s_status.enabled);
+	if (err == ESP_OK) {
+		s_status.persistence_enabled = enabled;
+		s_status.last_error = ESP_OK;
+	} else {
+		s_status.last_error = err;
+	}
+	xSemaphoreGive(s_control_lock);
+	return err;
+#endif
+}
+
+void heater_display_get_status(heater_display_status_t *status)
+{
+	if (!status) return;
+	*status = (heater_display_status_t){
+		.enabled = true,
+		.last_error = ESP_ERR_INVALID_STATE,
+	};
+	if (!s_control_lock || xSemaphoreTake(s_control_lock, pdMS_TO_TICKS(100)) != pdTRUE) {
+		return;
+	}
+	*status = s_status;
+	xSemaphoreGive(s_control_lock);
 }
 
 void heater_display_set_mesh_state(bool parent_connected, bool reliable_ready)
