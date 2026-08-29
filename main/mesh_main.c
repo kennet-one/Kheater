@@ -22,6 +22,7 @@
 #include "nvs_flash.h"
 
 #include "keemash_log_time_vprintf.h"
+#include "keemash_mesh_network.h"
 #include "keemash_mesh_node.h"
 #include "keemash_mesh_ota_receiver.h"
 #include "heater_controller.h"
@@ -84,6 +85,7 @@ static uint16_t s_ack_stale_count;
 static uint16_t s_tx_without_ack_count;
 static uint8_t s_last_parent_disconnect_reason;
 static uint8_t s_last_recovery_reason;
+static esp_err_t s_last_recovery_err;
 static recovery_phase_t s_recovery_phase = RECOVERY_OK;
 static bool s_rollback_pending;
 static bool s_telemetry_synced;
@@ -142,14 +144,16 @@ static esp_err_t fill_mesh_config(mesh_cfg_t *config)
 
 static esp_err_t configure_mesh(void)
 {
-	esp_err_t err = esp_mesh_fix_root(false);
+	esp_err_t err = keemash_mesh_apply_single_root_policy(
+		KEEMASH_MESH_ROLE_NODE);
 	if (err != ESP_OK) return err;
 	if ((err = esp_mesh_set_topology(CONFIG_MESH_TOPOLOGY)) != ESP_OK) return err;
 	if ((err = esp_mesh_set_max_layer(CONFIG_MESH_MAX_LAYER)) != ESP_OK) return err;
 	if ((err = esp_mesh_set_vote_percentage(1)) != ESP_OK) return err;
 	if ((err = esp_mesh_set_xon_qsize(128)) != ESP_OK) return err;
 	if ((err = esp_mesh_disable_ps()) != ESP_OK) return err;
-	if ((err = esp_mesh_set_ap_assoc_expire(10)) != ESP_OK) return err;
+	/* Encrypted mesh children may be quiet for more than the 10 s default. */
+	if ((err = esp_mesh_set_ap_assoc_expire(30)) != ESP_OK) return err;
 	if ((err = esp_mesh_set_ap_authmode(CONFIG_MESH_AP_AUTHMODE)) != ESP_OK) return err;
 
 	mesh_cfg_t config;
@@ -212,22 +216,68 @@ static esp_err_t full_mesh_restart(void)
 	if (s_mesh_recovering) return ESP_ERR_INVALID_STATE;
 	s_mesh_recovering = true;
 	s_parent_connected = false;
+	s_telemetry_synced = false;
 	mesh_v2_link_parent_disconnected();
 	mesh_v2_node_set_root_mac(NULL);
+	mesh_log_stream_clear_tx_accepted();
 
 	esp_err_t err = esp_mesh_stop();
-	if (err != ESP_OK && err != ESP_ERR_MESH_NOT_START) goto done;
+	if (err == ESP_OK || err == ESP_ERR_MESH_NOT_START) {
+		s_mesh_started = false;
+	} else {
+		goto done;
+	}
 	vTaskDelay(pdMS_TO_TICKS(250));
 	err = esp_mesh_deinit();
-	if (err != ESP_OK && err != ESP_ERR_MESH_NOT_INIT) goto done;
+	if (err == ESP_OK || err == ESP_ERR_MESH_NOT_INIT) {
+		s_mesh_initialized = false;
+	} else {
+		goto done;
+	}
 	err = esp_mesh_init();
 	if (err != ESP_OK) goto done;
+	s_mesh_initialized = true;
 	err = configure_mesh();
 	if (err != ESP_OK) goto done;
 	err = esp_mesh_start();
+	if (err == ESP_OK) s_mesh_started = true;
 
 done:
+	s_last_recovery_err = err;
 	s_mesh_recovering = false;
+	return err;
+}
+
+static void note_transport_disconnected(uint8_t reason, bool parent_event)
+{
+	uint32_t now = tick_ms();
+	if (parent_event) {
+		s_parent_disconnect_count++;
+		s_last_parent_disconnect_reason = reason;
+	}
+	s_parent_connected = false;
+	s_telemetry_synced = false;
+	s_recovery_phase = RECOVERY_RECONNECT;
+	if (s_unhealthy_since_ms == 0) s_unhealthy_since_ms = now;
+	mesh_v2_link_parent_disconnected();
+	mesh_v2_node_set_root_mac(NULL);
+	mesh_log_stream_clear_tx_accepted();
+	heater_display_set_mesh_state(false, false);
+}
+
+static esp_err_t reconnect_mesh(bool cycle_parent)
+{
+	esp_err_t err = ESP_OK;
+	if (cycle_parent) {
+		err = esp_mesh_disconnect();
+		if (err != ESP_OK && err != ESP_ERR_MESH_NOT_START) {
+			s_last_recovery_err = err;
+			return err;
+		}
+		vTaskDelay(pdMS_TO_TICKS(250));
+	}
+	err = esp_mesh_connect();
+	s_last_recovery_err = err;
 	return err;
 }
 
@@ -264,7 +314,11 @@ static void recovery_task(void *arg)
 				s_soft_reconnect_count++;
 				s_last_recovery_reason = MESH_V2_RECOVERY_REASON_SOFT_RECONNECT;
 				s_last_recovery_action_ms = now;
-				(void)esp_mesh_connect();
+				esp_err_t err = reconnect_mesh(false);
+				if (err != ESP_OK) {
+					ESP_LOGW(TAG, "mesh reconnect request failed: %s",
+						 esp_err_to_name(err));
+				}
 			}
 			if (down_ms >= RECOVERY_RESTART_MS &&
 			    !keemash_mesh_ota_receiver_active() && !s_mesh_recovering) {
@@ -274,8 +328,10 @@ static void recovery_task(void *arg)
 				s_last_recovery_action_ms = now;
 				esp_err_t err = full_mesh_restart();
 				ESP_LOGW(TAG, "mesh recovery restart: %s", esp_err_to_name(err));
-				s_unhealthy_since_ms = tick_ms();
-				s_last_soft_reconnect_ms = 0;
+				if (err == ESP_OK) {
+					s_unhealthy_since_ms = tick_ms();
+					s_last_soft_reconnect_ms = 0;
+				}
 			}
 			continue;
 		}
@@ -287,6 +343,7 @@ static void recovery_task(void *arg)
 			s_recovery_phase = RECOVERY_OK;
 			s_unhealthy_since_ms = 0;
 			s_last_recovery_reason = MESH_V2_RECOVERY_REASON_NONE;
+			s_last_recovery_err = ESP_OK;
 			s_last_soft_reconnect_ms = 0;
 			heater_display_set_mesh_state(true, true);
 			if (!s_telemetry_synced) {
@@ -318,16 +375,24 @@ static void recovery_task(void *arg)
 			s_soft_reconnect_count++;
 			s_last_recovery_reason = MESH_V2_RECOVERY_REASON_SOFT_RECONNECT;
 			s_last_recovery_action_ms = now;
-			(void)esp_mesh_disconnect();
-			vTaskDelay(pdMS_TO_TICKS(250));
-			(void)esp_mesh_connect();
+			esp_err_t err = reconnect_mesh(true);
+			if (err != ESP_OK) {
+				ESP_LOGW(TAG, "mesh parent cycle failed: %s",
+					 esp_err_to_name(err));
+			}
 		}
 		if (s_last_recovery_log_ms == 0 || now - s_last_recovery_log_ms >= RECOVERY_LOG_MS) {
 			s_last_recovery_log_ms = now;
-			ESP_LOGW(TAG, "root recovery phase=%u down=%lu ack_age=%lu last_tx=%s",
+			uint8_t root_mac[6] = {0};
+			bool root_known = mesh_v2_node_get_root_mac(root_mac);
+			ESP_LOGW(TAG,
+				 "root recovery parent=%u root=%s phase=%u down=%lu ack_age=%lu tx=%s recovery=%s",
+				 s_parent_connected ? 1U : 0U,
+				 root_known ? "known" : "unknown",
 				 (unsigned)s_recovery_phase, (unsigned long)down_ms,
 				 (unsigned long)mesh_v2_node_ack_age_ms(),
-				 esp_err_to_name(mesh_log_stream_last_send_err()));
+				 esp_err_to_name(mesh_log_stream_last_send_err()),
+				 esp_err_to_name(s_last_recovery_err));
 		}
 	}
 }
@@ -397,6 +462,8 @@ static void on_parent_connected(const mesh_event_connected_t *connected)
 	heater_display_set_mesh_state(true, false);
 	update_topology();
 	update_diagnostics();
+	request_root_resync();
+	send_telemetry_burst();
 	ESP_LOGI(TAG, "parent connected layer=%d parent=" MACSTR,
 		 s_layer, MAC2STR(s_parent_addr.addr));
 }
@@ -422,14 +489,8 @@ static void mesh_event_handler(void *arg, esp_event_base_t base,
 		break;
 	case MESH_EVENT_PARENT_DISCONNECTED: {
 		const mesh_event_disconnected_t *event = event_data;
-		s_parent_connected = false;
-		s_parent_disconnect_count++;
-		s_last_parent_disconnect_reason = (uint8_t)event->reason;
 		s_last_recovery_reason = MESH_V2_RECOVERY_REASON_PARENT_DISC;
-		s_unhealthy_since_ms = tick_ms();
-		mesh_v2_link_parent_disconnected();
-		mesh_log_stream_clear_tx_accepted();
-		heater_display_set_mesh_state(false, false);
+		note_transport_disconnected((uint8_t)event->reason, true);
 		ESP_LOGW(TAG, "parent disconnected reason=%d", event->reason);
 		break;
 	}
@@ -437,7 +498,7 @@ static void mesh_event_handler(void *arg, esp_event_base_t base,
 		const mesh_event_no_parent_found_t *event = event_data;
 		s_no_parent_count++;
 		s_last_recovery_reason = MESH_V2_RECOVERY_REASON_NO_PARENT;
-		if (s_unhealthy_since_ms == 0) s_unhealthy_since_ms = tick_ms();
+		if (!s_parent_connected) note_transport_disconnected(0, false);
 		ESP_LOGW(TAG, "no parent found scans=%d", event->scan_times);
 		break;
 	}
@@ -465,9 +526,10 @@ static void mesh_event_handler(void *arg, esp_event_base_t base,
 		if (event->is_rootless) {
 			s_rootless_count++;
 			s_last_recovery_reason = MESH_V2_RECOVERY_REASON_ROOTLESS;
-			s_unhealthy_since_ms = tick_ms();
+			if (s_unhealthy_since_ms == 0) s_unhealthy_since_ms = tick_ms();
 			s_telemetry_synced = false;
-			mesh_v2_node_set_root_mac(NULL);
+			mesh_v2_node_forget_root();
+			mesh_log_stream_clear_tx_accepted();
 			if (s_parent_connected) mesh_v2_node_kick_root();
 		}
 		break;
