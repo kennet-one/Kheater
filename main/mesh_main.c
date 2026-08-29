@@ -683,7 +683,7 @@ void app_main(void)
 
 	err = init_nvs();
 	if (err != ESP_OK) {
-		ESP_LOGE(TAG, "NVS unavailable: %s; setpoint persistence disabled",
+		ESP_LOGE(TAG, "NVS unavailable: %s; controller persistence disabled",
 			 esp_err_to_name(err));
 	}
 	err = heater_controller_init();
@@ -716,5 +716,10 @@ void app_main(void)
 		ESP_LOGE(TAG, "failed to create mesh bootstrap; autonomous controller remains active");
 	}
 
-	ESP_LOGI(TAG, "application ready outputs=OFF auto=disabled setpoint persisted-only");
+	heater_controller_status_t status;
+	heater_controller_get_status(&status);
+	ESP_LOGI(TAG, "application ready mode=%s outputs=%u%u%u rotation=%u",
+		 heater_controller_mode_name(status.mode), status.outputs.fan ? 1U : 0U,
+		 status.outputs.heat_low ? 1U : 0U, status.outputs.heat_high ? 1U : 0U,
+		 status.outputs.rotation ? 1U : 0U);
 }

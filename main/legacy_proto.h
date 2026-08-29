@@ -7,7 +7,7 @@
 
 #define KHEATER_LEGACY_REPLY_MAX 4
 #define KHEATER_LEGACY_REPLY_LEN 32
-#define KHEATER_COMMAND_RESULT_LEN 160
+#define KHEATER_COMMAND_RESULT_LEN 192
 
 typedef struct {
 	esp_err_t error;

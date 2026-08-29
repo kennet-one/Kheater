@@ -246,10 +246,11 @@ static void format_status(char *out, size_t out_size,
 		snprintf(temp, sizeof(temp), "?");
 	}
 	snprintf(out, out_size,
-		 "mode=%s auto=%u target=%.1f persist=%u temp=%s fan=%u low=%u high=%u rot=%u "
+		 "mode=%s auto=%u target=%.1f target_persist=%u mode_persist=%u temp=%s fan=%u low=%u high=%u rot=%u "
 		 "cooldown=%llus manual=%llus stop=%s timeouts=%lu",
 		 heater_controller_mode_name(status->mode), status->auto_enabled ? 1U : 0U,
 		 status->setpoint_c, status->setpoint_persistence_enabled ? 1U : 0U,
+		 status->mode_persistence_enabled ? 1U : 0U,
 		 temp, status->outputs.fan ? 1U : 0U,
 		 status->outputs.heat_low ? 1U : 0U,
 		 status->outputs.heat_high ? 1U : 0U,
@@ -272,7 +273,7 @@ static void format_status_token_from_snapshot(
 		snprintf(temperature, sizeof(temperature), "?");
 	}
 	snprintf(out, out_size,
-		 "H5m%ua%uf%ul%uh%ur%uv%uc%us%ut%sp%u",
+		 "H5m%ua%uf%ul%uh%ur%uv%uc%us%ut%sp%uq%u",
 		 (unsigned)status->mode, status->auto_enabled ? 1U : 0U,
 		 status->outputs.fan ? 1U : 0U,
 		 status->outputs.heat_low ? 1U : 0U,
@@ -281,7 +282,8 @@ static void format_status_token_from_snapshot(
 		 status->temperature_valid ? 1U : 0U,
 		 status->cooldown_active ? 1U : 0U,
 		 (unsigned)status->stop_reason, temperature,
-		 status->setpoint_persistence_enabled ? 1U : 0U);
+		 status->setpoint_persistence_enabled ? 1U : 0U,
+		 status->mode_persistence_enabled ? 1U : 0U);
 	out[out_size - 1] = '\0';
 }
 
@@ -367,6 +369,9 @@ bool legacy_execute_command(const char *text, kheater_command_result_t *result)
 	} else if (strlen(text) == 3 && text[0] == 'P' && text[1] == '5' &&
 		   (text[2] == '0' || text[2] == '1')) {
 		result->error = heater_controller_set_setpoint_persistence(text[2] == '1');
+	} else if (strlen(text) == 3 && text[0] == 'M' && text[1] == '5' &&
+		   (text[2] == '0' || text[2] == '1')) {
+		result->error = heater_controller_set_mode_persistence(text[2] == '1');
 	} else if (strncmp(text, "05", 2) == 0) {
 		float temperature = 0.0f;
 		if (!parse_float_strict(text + 2, &temperature)) {

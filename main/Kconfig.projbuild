@@ -232,6 +232,14 @@ menu "Kheater Configuration"
                 Keeps compatibility with existing firmware. The runtime P50/P51
                 command can disable or enable target persistence explicitly.
 
+        config KHEATER_MODE_PERSIST_DEFAULT
+            bool "Persist operating mode by default"
+            default n
+            help
+                Disabled by default so every new installation boots OFF. The
+                runtime M50/M51 command explicitly controls mode persistence.
+                Outputs are initialized OFF before a saved mode is restored.
+
         config KHEATER_SETPOINT_MIN_X10
             int "Minimum setpoint in tenths of a degree C"
             range -400 800

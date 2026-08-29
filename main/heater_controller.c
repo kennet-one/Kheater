@@ -15,12 +15,20 @@
 #define NVS_NAMESPACE "heater"
 #define NVS_SETPOINT_KEY "setpoint_x10"
 #define NVS_SETPOINT_PERSIST_KEY "persist_target"
+#define NVS_MODE_KEY "saved_mode"
+#define NVS_MODE_PERSIST_KEY "persist_mode"
 #define CONTROLLER_PERIOD_MS 100U
 
 #ifdef CONFIG_KHEATER_SETPOINT_PERSIST_DEFAULT
 #define SETPOINT_PERSIST_DEFAULT true
 #else
 #define SETPOINT_PERSIST_DEFAULT false
+#endif
+
+#ifdef CONFIG_KHEATER_MODE_PERSIST_DEFAULT
+#define MODE_PERSIST_DEFAULT true
+#else
+#define MODE_PERSIST_DEFAULT false
 #endif
 
 typedef struct {
@@ -31,6 +39,7 @@ typedef struct {
 	bool temperature_valid;
 	bool cooldown_active;
 	bool setpoint_persistence_enabled;
+	bool mode_persistence_enabled;
 	float setpoint_c;
 	float temperature_c;
 	uint64_t temperature_ms;
@@ -135,33 +144,76 @@ static void evaluate_auto_locked(uint64_t now)
 
 typedef struct {
 	float setpoint_c;
-	bool persistence_enabled;
-} setpoint_preferences_t;
+	bool setpoint_persistence_enabled;
+	heater_mode_t mode;
+	bool mode_persistence_enabled;
+} controller_preferences_t;
 
-static setpoint_preferences_t load_setpoint_preferences(void)
+static controller_preferences_t load_controller_preferences(void)
 {
-	setpoint_preferences_t preferences = {
+	controller_preferences_t preferences = {
 		.setpoint_c = config_x10_to_float(CONFIG_KHEATER_SETPOINT_DEFAULT_X10),
-		.persistence_enabled = SETPOINT_PERSIST_DEFAULT,
+		.setpoint_persistence_enabled = SETPOINT_PERSIST_DEFAULT,
+		.mode = HEATER_MODE_OFF,
+		.mode_persistence_enabled = MODE_PERSIST_DEFAULT,
 	};
 	int32_t x10 = CONFIG_KHEATER_SETPOINT_DEFAULT_X10;
 	nvs_handle_t handle;
 	if (nvs_open(NVS_NAMESPACE, NVS_READONLY, &handle) == ESP_OK) {
-		uint8_t persist = preferences.persistence_enabled ? 1U : 0U;
+		uint8_t persist = preferences.setpoint_persistence_enabled ? 1U : 0U;
 		esp_err_t persist_err = nvs_get_u8(handle, NVS_SETPOINT_PERSIST_KEY,
 						   &persist);
-		if (persist_err == ESP_OK) preferences.persistence_enabled = persist != 0;
-		if (preferences.persistence_enabled) {
+		if (persist_err == ESP_OK) {
+			preferences.setpoint_persistence_enabled = persist != 0;
+		}
+		if (preferences.setpoint_persistence_enabled) {
 			int32_t stored = x10;
 			if (nvs_get_i32(handle, NVS_SETPOINT_KEY, &stored) == ESP_OK) {
 				float value = config_x10_to_float(stored);
 				if (setpoint_in_range(value)) x10 = stored;
 			}
 		}
+		uint8_t mode_persist = preferences.mode_persistence_enabled ? 1U : 0U;
+		if (nvs_get_u8(handle, NVS_MODE_PERSIST_KEY, &mode_persist) == ESP_OK) {
+			preferences.mode_persistence_enabled = mode_persist != 0;
+		}
+		if (preferences.mode_persistence_enabled) {
+			uint8_t stored_mode = HEATER_MODE_OFF;
+			if (nvs_get_u8(handle, NVS_MODE_KEY, &stored_mode) == ESP_OK &&
+			    stored_mode <= HEATER_MODE_AUTO) {
+				preferences.mode = (heater_mode_t)stored_mode;
+			}
+		}
 		nvs_close(handle);
 	}
 	preferences.setpoint_c = config_x10_to_float(x10);
 	return preferences;
+}
+
+static esp_err_t save_mode_preferences(bool enabled, heater_mode_t mode)
+{
+	if (mode > HEATER_MODE_AUTO) return ESP_ERR_INVALID_ARG;
+	nvs_handle_t handle;
+	esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &handle);
+	if (err != ESP_OK) return err;
+	err = nvs_set_u8(handle, NVS_MODE_PERSIST_KEY, enabled ? 1U : 0U);
+	if (err == ESP_OK && enabled) {
+		err = nvs_set_u8(handle, NVS_MODE_KEY, (uint8_t)mode);
+	} else if (err == ESP_OK) {
+		esp_err_t erase_err = nvs_erase_key(handle, NVS_MODE_KEY);
+		if (erase_err != ESP_OK && erase_err != ESP_ERR_NVS_NOT_FOUND) err = erase_err;
+	}
+	if (err == ESP_OK) err = nvs_commit(handle);
+	nvs_close(handle);
+	return err;
+}
+
+static esp_err_t persist_mode_locked(heater_mode_t mode)
+{
+	if (!s_state.mode_persistence_enabled) return ESP_OK;
+	esp_err_t err = save_mode_preferences(true, mode);
+	if (err != ESP_OK) s_state.last_error = err;
+	return err;
 }
 
 static esp_err_t save_setpoint(float value)
@@ -244,20 +296,44 @@ esp_err_t heater_controller_init(void)
 	}
 
 	memset(&s_state, 0, sizeof(s_state));
-	setpoint_preferences_t preferences = load_setpoint_preferences();
+	controller_preferences_t preferences = load_controller_preferences();
 	s_state.mode = HEATER_MODE_OFF;
 	s_state.stop_reason = HEATER_STOP_BOOT;
 	s_state.setpoint_c = preferences.setpoint_c;
-	s_state.setpoint_persistence_enabled = preferences.persistence_enabled;
-	s_state.ready = true;
+	s_state.setpoint_persistence_enabled = preferences.setpoint_persistence_enabled;
+	s_state.mode_persistence_enabled = preferences.mode_persistence_enabled;
 	apply_outputs_locked(false, false, false, false);
 
 	if (xTaskCreate(controller_task, "heater_ctrl", 3072, NULL, 8, &s_task) != pdPASS) {
-		s_state.ready = false;
 		return ESP_ERR_NO_MEM;
 	}
-	ESP_LOGI(TAG, "controller ready OFF, setpoint=%.1f C persist=%u",
-		 s_state.setpoint_c, s_state.setpoint_persistence_enabled ? 1U : 0U);
+	if (xSemaphoreTake(s_lock, pdMS_TO_TICKS(500)) != pdTRUE) {
+		vTaskDelete(s_task);
+		s_task = NULL;
+		apply_outputs_locked(false, false, false, false);
+		return ESP_ERR_TIMEOUT;
+	}
+	s_state.ready = true;
+	if (s_state.mode_persistence_enabled) {
+		if (preferences.mode == HEATER_MODE_AUTO) {
+			s_state.auto_enabled = true;
+			s_state.mode = HEATER_MODE_AUTO;
+			s_state.stop_reason = HEATER_STOP_NONE;
+			/* AUTO stays de-energized until a fresh temperature arrives. */
+			apply_outputs_locked(false, false, false, false);
+		} else if (preferences.mode >= HEATER_MODE_FAN &&
+			   preferences.mode <= HEATER_MODE_MAX) {
+			apply_manual_locked(preferences.mode, now_ms());
+		}
+	}
+	heater_mode_t restored_mode = s_state.mode;
+	float restored_setpoint = s_state.setpoint_c;
+	bool target_persist = s_state.setpoint_persistence_enabled;
+	bool mode_persist = s_state.mode_persistence_enabled;
+	xSemaphoreGive(s_lock);
+	ESP_LOGI(TAG, "controller ready mode=%s setpoint=%.1f C target_persist=%u mode_persist=%u",
+		 heater_controller_mode_name(restored_mode), restored_setpoint,
+		 target_persist ? 1U : 0U, mode_persist ? 1U : 0U);
 	return ESP_OK;
 }
 
@@ -276,6 +352,11 @@ esp_err_t heater_controller_set_manual(heater_mode_t mode)
 	if (!s_lock || xSemaphoreTake(s_lock, pdMS_TO_TICKS(500)) != pdTRUE) {
 		return ESP_ERR_TIMEOUT;
 	}
+	esp_err_t persist_err = persist_mode_locked(mode);
+	if (persist_err != ESP_OK) {
+		xSemaphoreGive(s_lock);
+		return persist_err;
+	}
 	apply_manual_locked(mode, now_ms());
 	xSemaphoreGive(s_lock);
 	return ESP_OK;
@@ -289,6 +370,10 @@ esp_err_t heater_controller_set_off(void)
 	s_state.auto_enabled = false;
 	s_state.temperature_valid = false;
 	begin_cooldown_locked(HEATER_STOP_COMMAND, now_ms());
+	/* OFF is safety-critical even if the optional NVS update fails. */
+	if (persist_mode_locked(HEATER_MODE_OFF) != ESP_OK) {
+		ESP_LOGE(TAG, "failed to persist OFF mode: %s", esp_err_to_name(s_state.last_error));
+	}
 	xSemaphoreGive(s_lock);
 	return ESP_OK;
 }
@@ -297,6 +382,11 @@ esp_err_t heater_controller_enable_auto(void)
 {
 	if (!s_lock || xSemaphoreTake(s_lock, pdMS_TO_TICKS(500)) != pdTRUE) {
 		return ESP_ERR_TIMEOUT;
+	}
+	esp_err_t persist_err = persist_mode_locked(HEATER_MODE_AUTO);
+	if (persist_err != ESP_OK) {
+		xSemaphoreGive(s_lock);
+		return persist_err;
 	}
 	s_state.auto_enabled = true;
 	s_state.temperature_valid = false;
@@ -386,6 +476,21 @@ esp_err_t heater_controller_set_setpoint_persistence(bool enabled)
 	return err;
 }
 
+esp_err_t heater_controller_set_mode_persistence(bool enabled)
+{
+	if (!s_lock || xSemaphoreTake(s_lock, pdMS_TO_TICKS(500)) != pdTRUE) {
+		return ESP_ERR_TIMEOUT;
+	}
+	esp_err_t err = save_mode_preferences(enabled, s_state.mode);
+	if (err == ESP_OK) {
+		s_state.mode_persistence_enabled = enabled;
+	} else {
+		s_state.last_error = err;
+	}
+	xSemaphoreGive(s_lock);
+	return err;
+}
+
 esp_err_t heater_controller_toggle_rotation(bool *enabled)
 {
 	if (!s_lock || xSemaphoreTake(s_lock, pdMS_TO_TICKS(500)) != pdTRUE) {
@@ -420,6 +525,7 @@ void heater_controller_get_status(heater_controller_status_t *status)
 	status->temperature_valid = s_state.temperature_valid;
 	status->cooldown_active = s_state.cooldown_active;
 	status->setpoint_persistence_enabled = s_state.setpoint_persistence_enabled;
+	status->mode_persistence_enabled = s_state.mode_persistence_enabled;
 	status->setpoint_c = s_state.setpoint_c;
 	status->temperature_c = s_state.temperature_c;
 	status->temperature_age_ms = s_state.temperature_valid

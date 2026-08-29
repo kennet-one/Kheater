@@ -33,6 +33,7 @@ typedef struct {
 	bool temperature_valid;
 	bool cooldown_active;
 	bool setpoint_persistence_enabled;
+	bool mode_persistence_enabled;
 	float setpoint_c;
 	float temperature_c;
 	uint64_t temperature_age_ms;
@@ -52,6 +53,7 @@ esp_err_t heater_controller_reject_temperature(void);
 esp_err_t heater_controller_set_setpoint(float setpoint_c);
 esp_err_t heater_controller_set_setpoint_runtime(float setpoint_c);
 esp_err_t heater_controller_set_setpoint_persistence(bool enabled);
+esp_err_t heater_controller_set_mode_persistence(bool enabled);
 esp_err_t heater_controller_toggle_rotation(bool *enabled);
 void heater_controller_get_status(heater_controller_status_t *status);
 const char *heater_controller_mode_name(heater_mode_t mode);
