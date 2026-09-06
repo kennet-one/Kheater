@@ -424,22 +424,8 @@ bool legacy_execute_command(const char *text, kheater_command_result_t *result)
 		   (text[2] == '0' || text[2] == '1')) {
 		result->error = heater_controller_set_mode_persistence(text[2] == '1');
 	} else if (strncmp(text, "05", 2) == 0) {
-		float temperature = 0.0f;
-		if (!parse_float_strict(text + 2, &temperature)) {
-			result->error = heater_controller_reject_temperature();
-		} else {
-			result->error = heater_controller_feed_temperature(temperature);
-		}
-		heater_controller_get_status(&status);
-		if (result->error == ESP_OK && status.auto_enabled) {
-			add_reply(result, "A5");
-		}
-		snprintf(result->result, sizeof(result->result),
-			 result->error == ESP_OK
-			 ? (status.auto_enabled ? "AUTO temperature accepted"
-						: "temperature ignored; AUTO disabled")
-			 : "invalid external temperature");
-		if (result->error == ESP_OK) add_status_reply(result, &status);
+		result->error = ESP_ERR_NOT_SUPPORTED;
+		snprintf(result->result, sizeof(result->result), "use configured climate source");
 		return true;
 	} else {
 		return false;

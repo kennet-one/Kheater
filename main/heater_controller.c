@@ -9,6 +9,7 @@
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "heater_policy.h"
+#include "heater_climate.h"
 #include "nvs.h"
 #include "sdkconfig.h"
 
@@ -43,6 +44,7 @@ typedef struct {
 	float setpoint_c;
 	float temperature_c;
 	uint64_t temperature_ms;
+	uint64_t auto_after_ms;
 	uint64_t cooldown_until_ms;
 	uint64_t manual_until_ms;
 	uint32_t manual_timeout_count;
@@ -63,13 +65,6 @@ static uint64_t now_ms(void)
 static float config_x10_to_float(int value)
 {
 	return (float)value / 10.0f;
-}
-
-static bool temperature_in_range(float value)
-{
-	return heater_policy_value_in_range(
-		value, config_x10_to_float(CONFIG_KHEATER_TEMP_MIN_X10),
-		config_x10_to_float(CONFIG_KHEATER_TEMP_MAX_X10));
 }
 
 static bool setpoint_in_range(float value)
@@ -252,7 +247,27 @@ static void controller_task(void *arg)
 	for (;;) {
 		vTaskDelay(pdMS_TO_TICKS(CONTROLLER_PERIOD_MS));
 		uint64_t now = now_ms();
+		heater_climate_status_t climate;
+		heater_climate_get(&climate);
 		if (xSemaphoreTake(s_lock, portMAX_DELAY) != pdTRUE) continue;
+		const climate_sample_t *sample = climate.source == CLIMATE_ZONE
+			? &climate.policy.external : &climate.policy.local;
+		bool valid = climate.source != CLIMATE_NONE &&
+			(!s_state.auto_enabled || sample->sampled_ms > s_state.auto_after_ms);
+		if (valid) {
+			bool changed = !s_state.temperature_valid ||
+				s_state.temperature_ms != sample->sampled_ms ||
+				s_state.temperature_c != sample->temperature / 100.0f;
+			s_state.temperature_valid = true;
+			s_state.temperature_c = sample->temperature / 100.0f;
+			s_state.temperature_ms = sample->sampled_ms;
+			if (changed && s_state.auto_enabled && !s_state.cooldown_active)
+				evaluate_auto_locked(now);
+		} else {
+			if (s_state.auto_enabled && s_state.temperature_valid && !s_state.cooldown_active)
+				begin_cooldown_locked(HEATER_STOP_TEMP_STALE, now);
+			s_state.temperature_valid = false;
+		}
 
 		if (s_state.cooldown_active &&
 		    heater_policy_deadline_reached(now, s_state.cooldown_until_ms)) {
@@ -389,6 +404,7 @@ esp_err_t heater_controller_enable_auto(void)
 		return persist_err;
 	}
 	s_state.auto_enabled = true;
+	s_state.auto_after_ms = now_ms();
 	s_state.temperature_valid = false;
 	s_state.cooldown_active = false;
 	s_state.cooldown_until_ms = 0;
@@ -398,35 +414,6 @@ esp_err_t heater_controller_enable_auto(void)
 	apply_outputs_locked(false, false, false, false);
 	xSemaphoreGive(s_lock);
 	return ESP_OK;
-}
-
-esp_err_t heater_controller_feed_temperature(float temperature_c)
-{
-	if (!temperature_in_range(temperature_c)) return heater_controller_reject_temperature();
-	if (!s_lock || xSemaphoreTake(s_lock, pdMS_TO_TICKS(500)) != pdTRUE) {
-		return ESP_ERR_TIMEOUT;
-	}
-	s_state.temperature_c = temperature_c;
-	s_state.temperature_ms = now_ms();
-	s_state.temperature_valid = true;
-	if (s_state.auto_enabled && !s_state.cooldown_active) {
-		evaluate_auto_locked(s_state.temperature_ms);
-	}
-	xSemaphoreGive(s_lock);
-	return ESP_OK;
-}
-
-esp_err_t heater_controller_reject_temperature(void)
-{
-	if (!s_lock || xSemaphoreTake(s_lock, pdMS_TO_TICKS(500)) != pdTRUE) {
-		return ESP_ERR_TIMEOUT;
-	}
-	if (s_state.auto_enabled) {
-		s_state.temperature_valid = false;
-		begin_cooldown_locked(HEATER_STOP_TEMP_INVALID, now_ms());
-	}
-	xSemaphoreGive(s_lock);
-	return ESP_ERR_INVALID_ARG;
 }
 
 static esp_err_t set_setpoint(float setpoint_c, bool persist)

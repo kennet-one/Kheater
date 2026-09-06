@@ -15,6 +15,7 @@
 #include "keemash_mesh_node.h"
 #include "keemash_mesh_tx_broker.h"
 #include "legacy_proto.h"
+#include "heater_climate.h"
 #include "mesh_log_stream.h"
 #include "mesh_time_sync.h"
 
@@ -65,6 +66,7 @@ esp_err_t mesh_v2_link_init(const char *tag, bool relay_eligible)
 	if (err != ESP_OK) return err;
 	mesh_v2_node_set_relay_eligible(relay_eligible);
 	mesh_v2_node_init(tag);
+	mesh_v2_node_enable_capabilities(MESH_V2_CAP_TYPED_SENSOR);
 	return keemash_mesh_log_stream_init(tag);
 }
 
@@ -130,6 +132,16 @@ bool keemash_mesh_node_on_control_command_result(const char *text, uint8_t *stat
 						 char *result, size_t result_size)
 {
 	if (!text) return false;
+	esp_err_t climate_error;
+	if (heater_climate_command(text, &climate_error) || strcmp(text, "heater.climate?") == 0) {
+		if (strcmp(text, "heater.climate?") == 0) climate_error = ESP_OK;
+		if (status) *status = climate_error == ESP_OK ? MESH_V2_CONTROL_STATUS_OK : MESH_V2_CONTROL_STATUS_FAILED;
+		if (result && result_size) {
+			if (climate_error == ESP_OK) heater_climate_format(result, result_size);
+			else snprintf(result, result_size, "%s", esp_err_to_name(climate_error));
+		}
+		return true;
+	}
 	if (strcmp(text, "system.reboot") == 0) {
 		esp_err_t err = mesh_manual_reboot_schedule(1200, "reliable control");
 		if (status) *status = err == ESP_OK ? MESH_V2_CONTROL_STATUS_OK

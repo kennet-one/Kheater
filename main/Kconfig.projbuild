@@ -215,6 +215,16 @@ menu "Kheater Configuration"
             range 10000 3600000
             default 300000
 
+        config KHEATER_INTERNAL_TEMP_FRESH_MS
+            int "Internal AHT30 freshness timeout (ms)"
+            range 4000 30000
+            default 10000
+
+        config KHEATER_EXTERNAL_TEMP_FRESH_MS
+            int "External zone temperature freshness timeout (ms)"
+            range 10000 30000
+            default 30000
+
         config KHEATER_MANUAL_HEAT_LIMIT_MS
             int "Maximum continuous manual heat time (ms)"
             range 60000 28800000

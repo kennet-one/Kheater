@@ -9,6 +9,7 @@
 #include "freertos/task.h"
 #include "keemash_mesh_node.h"
 #include "legacy_proto.h"
+#include "heater_climate.h"
 #include "legacy_root_sender.h"
 
 #define STATUS_POLL_MS 500U
@@ -37,11 +38,17 @@ static void status_task(void *arg)
 	uint64_t last_schedule_attempt_ms = 0;
 	uint64_t last_display_sent_ms = 0;
 	uint64_t last_display_attempt_ms = 0;
+	uint64_t climate_sent_ms = 0;
 
 	for (;;) {
 		char token[KHEATER_LEGACY_REPLY_LEN] = {0};
 		legacy_format_status_token(token, sizeof(token));
 		uint64_t now = now_ms();
+		if (now - climate_sent_ms >= 5000) {
+			char climate[128];
+			heater_climate_format(climate, sizeof(climate));
+			if (mesh_v2_node_send_event(0, climate) == ESP_OK) climate_sent_ms = now;
+		}
 		bool changed = strcmp(token, last_sent) != 0;
 		bool heartbeat_due = now - last_sent_ms >= STATUS_HEARTBEAT_MS;
 		bool retry_ready = now - last_attempt_ms >= STATUS_RETRY_MS;

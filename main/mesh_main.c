@@ -26,6 +26,8 @@
 #include "keemash_mesh_node.h"
 #include "keemash_mesh_ota_receiver.h"
 #include "heater_controller.h"
+#include "heater_i2c.h"
+#include "heater_climate.h"
 #include "heater_display.h"
 #include "heater_output.h"
 #include "heater_schedule.h"
@@ -697,6 +699,9 @@ void app_main(void)
 		ESP_LOGW(TAG, "heater schedule unavailable: %s; controller remains active",
 			 esp_err_to_name(err));
 	}
+	err = heater_i2c_init();
+	if (err == ESP_OK) err = heater_climate_start();
+	if (err != ESP_OK) ESP_LOGE(TAG, "local climate unavailable: %s", esp_err_to_name(err));
 	err = heater_display_start();
 	if (err != ESP_OK) {
 		ESP_LOGW(TAG, "display unavailable: %s; controller remains active",

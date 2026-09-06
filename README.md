@@ -13,6 +13,7 @@ logo bitmap used by the SH1106 display.
 - high heat relay: GPIO14, active low
 - low heat relay: GPIO27, active low
 - SH1106 I2C display: SDA21, SCL22, address `0x3c`
+- AHT30 local temperature/humidity: same shared bus, address `0x38`, 3.3 V
 
 All four outputs are initialized OFF before NVS, display, Wi-Fi or ESP-MESH
 startup. The autonomous controller continues running if mesh startup fails.
@@ -30,10 +31,17 @@ The SH1106 shows the original 64x64 power-on logo for three seconds, then a
 live status view with mesh state, heater mode, current and target temperature,
 output indicators and the most important safety or schedule state.
 
-Boot always starts with heating, fan, rotation and AUTO disabled. Only the
-setpoint defaults to `26.7 C`. Existing installations keep target persistence
-enabled. The desktop can disable it; in that mode a reboot restores the default
-target while heater mode, AUTO and outputs always remain OFF.
+GPIOs always initialize OFF. Mode persistence (`M50/M51`) is a separate opt-in;
+saved AUTO waits for a new valid temperature and manual heat retains its cutoff.
+Target persistence (`P50/P51`) is independent; default target is `26.7 C`.
+
+Local AHT30 is the default AUTO source. An explicitly configured zone may use
+external temperature while fresh; loss/invalidity falls back to AHT30. Two fresh
+external samples are required to switch back. If neither source is usable,
+AUTO stops heat/rotation and runs the existing cooldown. Internal/external
+freshness defaults are 10/30 seconds. Humidity never controls heating.
+The display shows INT/ZONE and local RH; shared I2C acquisition continues even
+when the display is off. Typed SENSOR and HC1 events identify local data.
 
 ## Commands
 
@@ -49,8 +57,15 @@ target while heater mode, AUTO and outputs always remain OFF.
 | `heho` | publish legacy mode, rotation and setpoint state |
 | `W5...` | set target in the `5..35 C` range |
 | `P50`, `P51` | disable or enable target persistence across reboot |
-| `05...` | provide external temperature in the `-40..80 C` range |
+| `05...` | rejected: use the configured zone source, never unqualified input |
 | `heater.status` | read-only detailed diagnostic snapshot |
+| `heater.climate?` | read-only local/zone source, temperature, humidity and age |
+
+Configure persistent source bindings on node0 through paired KeeLink using
+`heater.source?`, `heater.source:internal`, or
+`heater.source:zone:<source12hex>`, targeted to the heater MAC. Internal HC/HT/HX
+messages are accepted only through authenticated-root reliable CONTROL.
+Run `tools\test-climate.cmd` for portable deterministic policy tests (MSVC).
 
 Manual heat has a four-hour one-shot limit. Invalid or stale AUTO temperature
 turns both heat outputs and rotation OFF and runs the fan for 30 seconds.

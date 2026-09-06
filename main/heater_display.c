@@ -11,6 +11,8 @@
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "heater_controller.h"
+#include "heater_i2c.h"
+#include "heater_climate.h"
 #include "heater_schedule.h"
 #include "nvs.h"
 #include "sdkconfig.h"
@@ -31,7 +33,6 @@ static const char *TAG = "heater_display";
 static portMUX_TYPE s_state_lock = portMUX_INITIALIZER_UNLOCKED;
 static bool s_parent_connected;
 static bool s_reliable_ready;
-static i2c_master_bus_handle_t s_bus;
 static i2c_master_dev_handle_t s_device;
 static u8g2_t s_u8g2;
 static uint8_t s_tx_buffer[DISPLAY_TX_BUFFER];
@@ -281,6 +282,8 @@ static void draw_status(void)
 	heater_controller_status_t status;
 	heater_schedule_status_t schedule;
 	heater_controller_get_status(&status);
+	heater_climate_status_t climate;
+	heater_climate_get(&climate);
 	heater_schedule_get_status(&schedule);
 	bool parent;
 	bool reliable;
@@ -296,6 +299,8 @@ static void draw_status(void)
 	snprintf(line, sizeof(line), "KHEATER %s",
 		 reliable ? "V2" : (parent ? "MESH" : "OFF"));
 	u8g2_DrawStr(&s_u8g2, 0, 9, line);
+	draw_right_aligned(climate.source == CLIMATE_ZONE ? "ZONE" :
+		climate.source == CLIMATE_INTERNAL ? "INT" : "--", 9);
 
 	u8g2_SetFont(&s_u8g2, u8g2_font_helvB14_tf);
 	u8g2_DrawStr(&s_u8g2, 0, 27,
@@ -308,10 +313,8 @@ static void draw_status(void)
 	u8g2_SetFont(&s_u8g2, u8g2_font_6x10_tf);
 	snprintf(line, sizeof(line), "SET %.1fC", status.setpoint_c);
 	u8g2_DrawStr(&s_u8g2, 0, 39, line);
-	if (status.temperature_valid) {
-		uint64_t age_s = status.temperature_age_ms / 1000ULL;
-		if (age_s > 999ULL) age_s = 999ULL;
-		snprintf(right, sizeof(right), "AGE %llus", (unsigned long long)age_s);
+	if (climate.policy.local.valid && climate.now_ms < climate.policy.local.expires_ms) {
+		snprintf(right, sizeof(right), "RH %.0f%%", climate.policy.local.humidity / 100.0);
 		draw_right_aligned(right, 39);
 	}
 
@@ -329,34 +332,13 @@ static void draw_status(void)
 
 static esp_err_t init_display_hardware(void)
 {
-	i2c_master_bus_config_t bus_config = {
-		.i2c_port = DISPLAY_I2C_PORT,
-		.sda_io_num = CONFIG_KHEATER_I2C_SDA_GPIO,
-		.scl_io_num = CONFIG_KHEATER_I2C_SCL_GPIO,
-		.clk_source = I2C_CLK_SRC_DEFAULT,
-		.glitch_ignore_cnt = 7,
-		.flags.enable_internal_pullup = true,
-	};
-	esp_err_t err = i2c_new_master_bus(&bus_config, &s_bus);
+	esp_err_t err = heater_i2c_add(CONFIG_KHEATER_I2C_ADDRESS, &s_device);
 	if (err != ESP_OK) return err;
-	i2c_device_config_t device_config = {
-		.dev_addr_length = I2C_ADDR_BIT_LEN_7,
-		.device_address = CONFIG_KHEATER_I2C_ADDRESS,
-		.scl_speed_hz = 400000,
-	};
-	err = i2c_master_bus_add_device(s_bus, &device_config, &s_device);
-	if (err != ESP_OK) {
-		(void)i2c_del_master_bus(s_bus);
-		s_bus = NULL;
-		return err;
-	}
 	uint8_t probe = 0x00;
 	err = i2c_master_transmit(s_device, &probe, 1, 100);
 	if (err != ESP_OK) {
-		(void)i2c_master_bus_rm_device(s_device);
-		(void)i2c_del_master_bus(s_bus);
+		(void)heater_i2c_remove(s_device);
 		s_device = NULL;
-		s_bus = NULL;
 	}
 	return err;
 }

@@ -48,8 +48,6 @@ bool heater_controller_ready(void);
 esp_err_t heater_controller_set_manual(heater_mode_t mode);
 esp_err_t heater_controller_set_off(void);
 esp_err_t heater_controller_enable_auto(void);
-esp_err_t heater_controller_feed_temperature(float temperature_c);
-esp_err_t heater_controller_reject_temperature(void);
 esp_err_t heater_controller_set_setpoint(float setpoint_c);
 esp_err_t heater_controller_set_setpoint_runtime(float setpoint_c);
 esp_err_t heater_controller_set_setpoint_persistence(bool enabled);
