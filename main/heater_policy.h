@@ -18,3 +18,6 @@ heater_policy_outputs_t heater_policy_auto_outputs(float setpoint_c,
 						   bool rotation);
 bool heater_policy_deadline_reached(uint64_t now_ms, uint64_t deadline_ms);
 bool heater_policy_self_test(void);
+heater_policy_outputs_t heater_policy_auto_protected(float setpoint_c, float temperature_c,
+    float high_delta_c, float hysteresis_c, heater_policy_outputs_t current,
+    uint64_t now_ms, uint64_t changed_ms, uint32_t interval_ms, bool valid);

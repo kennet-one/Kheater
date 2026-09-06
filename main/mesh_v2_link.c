@@ -16,6 +16,7 @@
 #include "keemash_mesh_tx_broker.h"
 #include "legacy_proto.h"
 #include "heater_climate.h"
+#include "heater_controller.h"
 #include "mesh_log_stream.h"
 #include "mesh_time_sync.h"
 
@@ -132,6 +133,18 @@ bool keemash_mesh_node_on_control_command_result(const char *text, uint8_t *stat
 						 char *result, size_t result_size)
 {
 	if (!text) return false;
+    if (strcmp(text, "heater.relay?") == 0 || strcmp(text, "heater.relay:10") == 0 ||
+        strcmp(text, "heater.relay:30") == 0 || strcmp(text, "heater.relay:60") == 0) {
+        esp_err_t err = ESP_OK;
+        if (text[12] == ':') err = heater_controller_set_relay_interval(
+            text[13] == '1' ? 10 : text[13] == '3' ? 30 : 60);
+        if (status) *status = err == ESP_OK ? MESH_V2_CONTROL_STATUS_OK : MESH_V2_CONTROL_STATUS_FAILED;
+        if (result && result_size) {
+            if (err == ESP_OK) heater_controller_format_relay(result, result_size);
+            else snprintf(result, result_size, "%s", esp_err_to_name(err));
+        }
+        return true;
+    }
 	esp_err_t climate_error;
 	if (heater_climate_command(text, &climate_error) || strcmp(text, "heater.climate?") == 0) {
 		if (strcmp(text, "heater.climate?") == 0) climate_error = ESP_OK;

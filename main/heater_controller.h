@@ -40,11 +40,15 @@ typedef struct {
 	uint64_t cooldown_remaining_ms;
 	uint64_t manual_remaining_ms;
 	uint32_t manual_timeout_count;
+    uint32_t relay_interval_ms;
+    uint32_t relay_hold_ms;
 	esp_err_t last_error;
 } heater_controller_status_t;
 
 esp_err_t heater_controller_init(void);
 bool heater_controller_ready(void);
+esp_err_t heater_controller_set_relay_interval(uint32_t seconds);
+void heater_controller_format_relay(char *out, size_t size);
 esp_err_t heater_controller_set_manual(heater_mode_t mode);
 esp_err_t heater_controller_set_off(void);
 esp_err_t heater_controller_enable_auto(void);

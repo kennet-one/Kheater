@@ -9,6 +9,10 @@ if not exist build mkdir build
 cl /nologo /std:c11 /W4 /WX /DCLIMATE_HOST_TEST main\heater_climate_policy.c main\heater_climate_selftest.c /Fo:build\ /Fe:build\climate-policy-test.exe
 if errorlevel 1 (popd & exit /b 1)
 build\climate-policy-test.exe
+if errorlevel 1 (popd & exit /b 1)
+cl /nologo /std:c11 /W4 /WX main\heater_policy.c tools\heater-policy-host.c /Fo:build\ /Fe:build\heater-policy-test.exe
+if errorlevel 1 (popd & exit /b 1)
+build\heater-policy-test.exe
 set "RESULT=%errorlevel%"
 popd
 exit /b %RESULT%

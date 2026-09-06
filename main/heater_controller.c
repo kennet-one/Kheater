@@ -1,6 +1,7 @@
 #include "heater_controller.h"
 
 #include <math.h>
+#include <stdio.h>
 #include <string.h>
 
 #include "esp_log.h"
@@ -48,6 +49,9 @@ typedef struct {
 	uint64_t cooldown_until_ms;
 	uint64_t manual_until_ms;
 	uint32_t manual_timeout_count;
+    uint32_t relay_interval_ms;
+    uint64_t relay_changed_ms;
+    bool outputs_initialized;
 	esp_err_t last_error;
 	bool ready;
 } controller_state_t;
@@ -82,8 +86,14 @@ static void apply_outputs_locked(bool fan, bool low, bool high, bool rotation)
 		.heat_high = high,
 		.rotation = rotation,
 	};
+    if (s_state.outputs_initialized && s_state.outputs.fan == fan &&
+        s_state.outputs.heat_low == low && s_state.outputs.heat_high == high &&
+        s_state.outputs.rotation == rotation) return;
 	esp_err_t err = heater_output_apply(&next);
 	if (err == ESP_OK) {
+        if (!s_state.outputs_initialized || s_state.outputs.heat_low != low || s_state.outputs.heat_high != high)
+            s_state.relay_changed_ms = now_ms();
+        s_state.outputs_initialized = true;
 		s_state.outputs = next;
 	} else {
 		s_state.last_error = err;
@@ -127,9 +137,12 @@ static void evaluate_auto_locked(uint64_t now)
 	if (s_state.cooldown_active) return;
 
 	float high_delta = config_x10_to_float(CONFIG_KHEATER_HIGH_DELTA_X10);
-	heater_policy_outputs_t outputs = heater_policy_auto_outputs(
-		s_state.setpoint_c, s_state.temperature_c, high_delta,
-		s_state.outputs.rotation);
+    heater_policy_outputs_t current = { .fan = s_state.outputs.fan,
+        .heat_low = s_state.outputs.heat_low, .heat_high = s_state.outputs.heat_high,
+        .rotation = s_state.outputs.rotation };
+    heater_policy_outputs_t outputs = heater_policy_auto_protected(
+        s_state.setpoint_c, s_state.temperature_c, high_delta, 0.2f,
+        current, now, s_state.relay_changed_ms, s_state.relay_interval_ms, true);
 	s_state.mode = HEATER_MODE_AUTO;
 	s_state.stop_reason = HEATER_STOP_NONE;
 	apply_outputs_locked(outputs.fan, outputs.heat_low, outputs.heat_high,
@@ -142,6 +155,7 @@ typedef struct {
 	bool setpoint_persistence_enabled;
 	heater_mode_t mode;
 	bool mode_persistence_enabled;
+    uint32_t relay_interval_ms;
 } controller_preferences_t;
 
 static controller_preferences_t load_controller_preferences(void)
@@ -151,10 +165,14 @@ static controller_preferences_t load_controller_preferences(void)
 		.setpoint_persistence_enabled = SETPOINT_PERSIST_DEFAULT,
 		.mode = HEATER_MODE_OFF,
 		.mode_persistence_enabled = MODE_PERSIST_DEFAULT,
+        .relay_interval_ms = 30000,
 	};
 	int32_t x10 = CONFIG_KHEATER_SETPOINT_DEFAULT_X10;
 	nvs_handle_t handle;
 	if (nvs_open(NVS_NAMESPACE, NVS_READONLY, &handle) == ESP_OK) {
+        uint32_t interval = 30000;
+        if (nvs_get_u32(handle, "relay_interval", &interval) == ESP_OK &&
+            (interval == 10000 || interval == 30000 || interval == 60000)) preferences.relay_interval_ms = interval;
 		uint8_t persist = preferences.setpoint_persistence_enabled ? 1U : 0U;
 		esp_err_t persist_err = nvs_get_u8(handle, NVS_SETPOINT_PERSIST_KEY,
 						   &persist);
@@ -255,13 +273,10 @@ static void controller_task(void *arg)
 		bool valid = climate.source != CLIMATE_NONE &&
 			(!s_state.auto_enabled || sample->sampled_ms > s_state.auto_after_ms);
 		if (valid) {
-			bool changed = !s_state.temperature_valid ||
-				s_state.temperature_ms != sample->sampled_ms ||
-				s_state.temperature_c != sample->temperature / 100.0f;
 			s_state.temperature_valid = true;
 			s_state.temperature_c = sample->temperature / 100.0f;
 			s_state.temperature_ms = sample->sampled_ms;
-			if (changed && s_state.auto_enabled && !s_state.cooldown_active)
+			if (s_state.auto_enabled && !s_state.cooldown_active)
 				evaluate_auto_locked(now);
 		} else {
 			if (s_state.auto_enabled && s_state.temperature_valid && !s_state.cooldown_active)
@@ -317,6 +332,7 @@ esp_err_t heater_controller_init(void)
 	s_state.setpoint_c = preferences.setpoint_c;
 	s_state.setpoint_persistence_enabled = preferences.setpoint_persistence_enabled;
 	s_state.mode_persistence_enabled = preferences.mode_persistence_enabled;
+    s_state.relay_interval_ms = preferences.relay_interval_ms;
 	apply_outputs_locked(false, false, false, false);
 
 	if (xTaskCreate(controller_task, "heater_ctrl", 3072, NULL, 8, &s_task) != pdPASS) {
@@ -537,8 +553,42 @@ void heater_controller_get_status(heater_controller_status_t *status)
 	status->manual_remaining_ms =
 		s_state.manual_until_ms > now ? s_state.manual_until_ms - now : 0;
 	status->manual_timeout_count = s_state.manual_timeout_count;
+    status->relay_interval_ms = s_state.relay_interval_ms;
+    uint64_t elapsed = now >= s_state.relay_changed_ms ? now - s_state.relay_changed_ms : 0;
+    status->relay_hold_ms = elapsed < s_state.relay_interval_ms ? s_state.relay_interval_ms - (uint32_t)elapsed : 0;
 	status->last_error = s_state.last_error;
 	xSemaphoreGive(s_lock);
+}
+
+esp_err_t heater_controller_set_relay_interval(uint32_t seconds)
+{
+    if (seconds != 10 && seconds != 30 && seconds != 60) return ESP_ERR_INVALID_ARG;
+    if (!s_lock || xSemaphoreTake(s_lock, pdMS_TO_TICKS(500)) != pdTRUE) return ESP_ERR_TIMEOUT;
+    uint32_t interval = seconds * 1000;
+    esp_err_t err = ESP_OK;
+    if (interval != s_state.relay_interval_ms) {
+        nvs_handle_t handle;
+        err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &handle);
+        if (err == ESP_OK) {
+            err = nvs_set_u32(handle, "relay_interval", interval);
+            if (err == ESP_OK) err = nvs_commit(handle);
+            nvs_close(handle);
+        }
+        if (err == ESP_OK) s_state.relay_interval_ms = interval;
+        else s_state.last_error = err;
+    }
+    xSemaphoreGive(s_lock);
+    return err;
+}
+
+void heater_controller_format_relay(char *out, size_t size)
+{
+    if (!out || !size) return;
+    heater_controller_status_t state;
+    heater_controller_get_status(&state);
+    snprintf(out, size, "HP1 interval=%lu hold=%lu hysteresis=20",
+        (unsigned long)(state.relay_interval_ms / 1000),
+        (unsigned long)((state.relay_hold_ms + 999) / 1000));
 }
 
 const char *heater_controller_mode_name(heater_mode_t mode)
