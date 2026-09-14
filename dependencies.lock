@@ -4,15 +4,24 @@ dependencies:
       type: idf
     version: 6.0.1
   keemash_mesh_core:
-    component_hash: a0fd27b54f325d8303121dd949638253a914c3b9c27ceaaee39ea4b067a5a3ae
+    component_hash: ad165863af7e817782048ad4c6a5266d580ad3f31d9bf6618d87f825cef6ff07
     dependencies:
     - name: idf
       version: '>=6.0.1,<6.1'
+    - name: livekit/nanopb
+      version: ^0.4.9
     source:
       git: https://github.com/kennet-one/keemash_core.git
       path: .
       type: git
-    version: f3a77ff3c2a6678abc4276b4ac871ccd98bb399a
+    version: 8f4f5510ad6b2408c39f8ec8fe8eddf6411d5443
+  livekit/nanopb:
+    component_hash: 6a1682f4de30d155d0ec14552e482875f295df75af1740f687fd88198cd19f48
+    dependencies: []
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 0.4.9~2
   u8g2:
     component_hash: c8acbc53f3b573d081434cfe0454d2a0e678834f7979364a5ee254399556cb52
     dependencies: []
@@ -24,6 +33,6 @@ dependencies:
 direct_dependencies:
 - keemash_mesh_core
 - u8g2
-manifest_hash: e44e9be4bc8bcfc24794b8551b658dc8a2940202230a73beaf18b9d2c2c7f633
+manifest_hash: 05383b8470661b981b7ff2f491aa50b534c830e1646e6b8408b6bad2ecd68fcb
 target: esp32
 version: 3.0.0
