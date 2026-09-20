@@ -239,27 +239,31 @@ static void add_mode_reply(kheater_command_result_t *result,
 static void format_status(char *out, size_t out_size,
 			  const heater_controller_status_t *status)
 {
-	char temp[24];
-	if (status->temperature_valid) {
-		snprintf(temp, sizeof(temp), "%.1f/%llus", status->temperature_c,
-			 (unsigned long long)(status->temperature_age_ms / 1000ULL));
-	} else {
-		snprintf(temp, sizeof(temp), "?");
-	}
+	uint64_t temp_age_s = status->temperature_age_ms / 1000ULL;
+	uint64_t cooldown_s = status->cooldown_remaining_ms / 1000ULL;
+	uint64_t manual_s = status->manual_remaining_ms / 1000ULL;
+	uint32_t temp_age = temp_age_s > UINT16_MAX ? UINT16_MAX : (uint32_t)temp_age_s;
+	uint32_t cooldown = cooldown_s > UINT16_MAX ? UINT16_MAX : (uint32_t)cooldown_s;
+	uint32_t manual = manual_s > UINT16_MAX ? UINT16_MAX : (uint32_t)manual_s;
+	uint32_t timeouts = status->manual_timeout_count > UINT16_MAX ?
+		UINT16_MAX : status->manual_timeout_count;
+	long setpoint_x10 = lroundf(status->setpoint_c * 10.0f);
+	long temperature_x10 = status->temperature_valid ?
+		lroundf(status->temperature_c * 10.0f) : 0;
+	unsigned outputs = (status->outputs.fan ? 8U : 0U) |
+		(status->outputs.heat_low ? 4U : 0U) |
+		(status->outputs.heat_high ? 2U : 0U) |
+		(status->outputs.rotation ? 1U : 0U);
+
+	/* Bounded for the 128-byte reliable CONTROL result cache. */
 	snprintf(out, out_size,
-		 "mode=%s auto=%u target=%.1f target_persist=%u mode_persist=%u temp=%s fan=%u low=%u high=%u rot=%u "
-		 "cooldown=%llus manual=%llus stop=%s timeouts=%lu",
-		 heater_controller_mode_name(status->mode), status->auto_enabled ? 1U : 0U,
-		 status->setpoint_c, status->setpoint_persistence_enabled ? 1U : 0U,
+		 "H6 m=%u a=%u sp=%ld tp=%u mp=%u tv=%u t=%ld ta=%u o=%X cd=%u man=%u sr=%u tc=%u",
+		 (unsigned)status->mode, status->auto_enabled ? 1U : 0U,
+		 setpoint_x10, status->setpoint_persistence_enabled ? 1U : 0U,
 		 status->mode_persistence_enabled ? 1U : 0U,
-		 temp, status->outputs.fan ? 1U : 0U,
-		 status->outputs.heat_low ? 1U : 0U,
-		 status->outputs.heat_high ? 1U : 0U,
-		 status->outputs.rotation ? 1U : 0U,
-		 (unsigned long long)(status->cooldown_remaining_ms / 1000ULL),
-		 (unsigned long long)(status->manual_remaining_ms / 1000ULL),
-		 heater_controller_stop_reason_name(status->stop_reason),
-		 (unsigned long)status->manual_timeout_count);
+		 status->temperature_valid ? 1U : 0U, temperature_x10,
+		 (unsigned)temp_age, outputs, (unsigned)cooldown, (unsigned)manual,
+		 (unsigned)status->stop_reason, (unsigned)timeouts);
 }
 
 static void format_status_token_from_snapshot(
