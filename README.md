@@ -61,6 +61,12 @@ when the display is off. Typed SENSOR and HC1 events identify local data.
 | `heater.status` | read-only detailed diagnostic snapshot |
 | `heater.climate?` | read-only local/zone source, temperature, humidity and age |
 
+`heater.status` returns a bounded `H6` result that fits the reliable CONTROL
+cache. Fields are `m` mode, `a` AUTO, `sp` setpoint x10, `tp` target
+persistence, `mp` mode persistence, `tv/t/ta` temperature validity/value x10/age
+seconds, `o` output bit mask (fan/low/high/rotation), `cd` cooldown seconds,
+`man` manual-run seconds, `sr` stop reason and `tc` timeout count.
+
 Configure persistent source bindings on node0 through paired KeeLink using
 `heater.source?`, `heater.source:internal`, or
 `heater.source:zone:<source12hex>`, targeted to the heater MAC. Internal HC/HT/HX
